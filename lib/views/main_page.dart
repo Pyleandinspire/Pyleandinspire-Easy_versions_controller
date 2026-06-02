@@ -44,6 +44,7 @@ class _MainPageState extends ConsumerState<MainPage> {
             child: Row(
               children: [
                 _buildLeftPanel(filesAsync),
+                _buildCenterPanel(),
                 _buildRightPanel(commitHistory),
               ],
             ),
@@ -268,55 +269,106 @@ class _MainPageState extends ConsumerState<MainPage> {
     );
   }
 
-  Widget _buildRightPanel(AsyncValue<List<Map<String, dynamic>>> commitHistory) {
+  Widget _buildCenterPanel() {
     return Expanded(
       child: Container(
         color: Colors.white,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Row(
-                children: [
-                  Text('时间轴', style: AppTextStyles.heading3),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.edit_note, size: 18),
-                    tooltip: '编辑',
-                    onPressed: _selectedFile != null ? () => _showEditorView() : null,
-                    disabledColor: AppColors.textSecondary,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    tooltip: '刷新',
-                    onPressed: () {},
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.compare_arrows, size: 18),
-                    tooltip: '对比',
-                    onPressed: _selectedFile != null ? () => _showCompareView(commitHistory) : null,
-                    disabledColor: AppColors.textSecondary,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.commit, size: 18),
-                    tooltip: '提交',
-                    onPressed: _selectedFile != null ? () => _showCommitDialog() : null,
-                    disabledColor: AppColors.textSecondary,
-                  ),
-                ],
+        child: _selectedFile == null 
+            ? _buildNoSelectionPreview()
+            : _buildFilePreview(),
+      ),
+    );
+  }
+
+  Widget _buildNoSelectionPreview() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.file_open, size: 64, color: Color(0xFFCBD5E1)),
+          const SizedBox(height: AppSpacing.md),
+          Text('选择文件进行预览', style: AppTextStyles.bodySecondary),
+          const SizedBox(height: AppSpacing.sm),
+          Text('在左侧列表中选择一个文件查看内容', style: AppTextStyles.caption),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilePreview() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Row(
+            children: [
+              const Icon(Icons.file_open, size: 20, color: AppColors.accent),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  _selectedFile?.fileName ?? '',
+                  style: AppTextStyles.heading3,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            Expanded(
-              child: _selectedFile == null
-                  ? _buildNoSelectionState()
-                  : commitHistory.when(
-                      data: (commits) => commits.isEmpty ? _buildEmptyTimeline(_selectedFile!) : _buildTimeline(commits),
-                      loading: () => const Center(child: CircularProgressIndicator()),
-                      error: (e, _) => Center(child: Text('加载失败: $e', style: AppTextStyles.bodySecondary)),
-                    ),
-            ),
-          ],
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.edit_note, size: 18),
+                tooltip: '编辑',
+                onPressed: _selectedFile != null ? () => _showEditorView() : null,
+                disabledColor: AppColors.textSecondary,
+              ),
+              IconButton(
+                icon: const Icon(Icons.compare_arrows, size: 18),
+                tooltip: '对比',
+                onPressed: _selectedFile != null ? () => _showCompareView(ref.watch(commitHistoryProvider(_selectedFile))) : null,
+                disabledColor: AppColors.textSecondary,
+              ),
+            ],
+          ),
         ),
+        const Divider(height: 1, color: AppColors.border),
+        Expanded(
+          child: _selectedFile != null 
+              ? _FilePreviewContent(file: _selectedFile!)
+              : const SizedBox(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRightPanel(AsyncValue<List<Map<String, dynamic>>> commitHistory) {
+    return Container(
+      width: 250,
+      decoration: const BoxDecoration(
+        color: AppColors.primary,
+        border: Border(
+          left: BorderSide(color: AppColors.border, width: 1),
+        ),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Row(
+              children: [
+                const Icon(Icons.history, size: 18, color: AppColors.accent),
+                const SizedBox(width: AppSpacing.sm),
+                Text('时间轴', style: AppTextStyles.heading3),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          Expanded(
+            child: _selectedFile == null
+                ? _buildNoSelectionTimeline()
+                : commitHistory.when(
+                    data: (commits) => commits.isEmpty ? _buildEmptyTimeline(_selectedFile!) : _buildTimeline(commits),
+                    loading: () => const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(child: Text('加载失败', style: AppTextStyles.caption),),
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -487,5 +539,100 @@ class _MainPageState extends ConsumerState<MainPage> {
         ),
       );
     }
+  }
+
+  Widget _buildNoSelectionTimeline() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.history, size: 32, color: Color(0xFFCBD5E1)),
+          const SizedBox(height: AppSpacing.sm),
+          Text('选择文件查看历史', style: AppTextStyles.caption),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilePreviewContent extends StatefulWidget {
+  final TrackedFile file;
+
+  const _FilePreviewContent({required this.file});
+
+  @override
+  State<_FilePreviewContent> createState() => _FilePreviewContentState();
+}
+
+class _FilePreviewContentState extends State<_FilePreviewContent> {
+  String _content = '';
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFileContent();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FilePreviewContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file.id != widget.file.id) {
+      _loadFileContent();
+    }
+  }
+
+  Future<void> _loadFileContent() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final file = File(widget.file.filePath);
+      if (await file.exists()) {
+        _content = await file.readAsString();
+      } else {
+        _error = '文件不存在';
+      }
+    } catch (e) {
+      _error = '读取文件失败: $e';
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+            const SizedBox(height: AppSpacing.md),
+            Text(_error!, style: AppTextStyles.bodySecondary),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: SingleChildScrollView(
+        child: Text(
+          _content,
+          style: AppTextStyles.body.copyWith(fontFamily: 'Monaco', fontSize: 13),
+          textAlign: TextAlign.left,
+        ),
+      ),
+    );
   }
 }
