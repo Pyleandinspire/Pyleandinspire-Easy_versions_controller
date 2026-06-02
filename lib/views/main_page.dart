@@ -10,6 +10,7 @@ import 'package:easy_versions_controller/viewmodels/file_picker_provider.dart';
 import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/views/help_dialog.dart';
+import 'package:easy_versions_controller/views/compare_view.dart';
 
 final commitHistoryProvider = FutureProvider.family<List<Map<String, dynamic>>, TrackedFile?>((ref, file) async {
   if (file == null) return [];
@@ -277,7 +278,8 @@ class _MainPageState extends ConsumerState<MainPage> {
                   IconButton(
                     icon: const Icon(Icons.compare_arrows, size: 18),
                     tooltip: '对比',
-                    onPressed: () {},
+                    onPressed: _selectedFile != null ? () => _showCompareView(commitHistory) : null,
+                    disabledColor: AppColors.textSecondary,
                   ),
                 ],
               ),
@@ -411,5 +413,19 @@ class _MainPageState extends ConsumerState<MainPage> {
       context: context,
       builder: (context) => const HelpDialog(),
     );
+  }
+
+  void _showCompareView(AsyncValue<List<Map<String, dynamic>>> commitHistory) {
+    if (_selectedFile != null && commitHistory is AsyncData<List<Map<String, dynamic>>>) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CompareView(
+            file: _selectedFile!,
+            commits: commitHistory.value ?? [],
+          ),
+        ),
+      );
+    }
   }
 }

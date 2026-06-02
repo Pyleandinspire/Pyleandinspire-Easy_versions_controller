@@ -13,8 +13,10 @@ class AppColors {
   static const Color divider = Color(0xFFE2E8F0);
 
   static const Color diffAdded = Color(0xFFDCFCE7);
-  static const Color diffDeleted = Color(0xFFFEE2E2);
+  static const Color diffRemoved = Color(0xFFFEE2E2);
   static const Color diffModified = Color(0xFFFEF9C3);
+  static const Color diffContext = Color(0xFFF1F5F9);
+  static const Color background = Color(0xFFFFFFFF);
 
   static const Color aiMessageBg = Color(0xFFF1F5F9);
   static const Color userMessageBg = Color(0xFFDBEAFE);
