@@ -12,5 +12,13 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.files.pictures.read-write</key>
+	<true/>
+	<key>com.apple.security.security.application-groups</key>
+	<array>
+		<string>group.com.example.easy_versions_controller</string>
+	</array>
 </dict>
 </plist>

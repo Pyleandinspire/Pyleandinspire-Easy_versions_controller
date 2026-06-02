@@ -11,6 +11,9 @@ import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/views/help_dialog.dart';
 import 'package:easy_versions_controller/views/compare_view.dart';
+import 'package:easy_versions_controller/views/commit_dialog.dart';
+import 'package:easy_versions_controller/views/ai_agent_view.dart';
+import 'package:easy_versions_controller/views/text_editor_view.dart';
 
 final commitHistoryProvider = FutureProvider.family<List<Map<String, dynamic>>, TrackedFile?>((ref, file) async {
   if (file == null) return [];
@@ -70,6 +73,11 @@ class _MainPageState extends ConsumerState<MainPage> {
               icon: const Icon(Icons.help_outline, size: 20),
               tooltip: '使用说明',
               onPressed: () => _showHelpDialog(),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline, size: 20),
+              tooltip: 'AI 助手',
+              onPressed: () => _showAiAgentView(),
             ),
             const Spacer(),
             IconButton(
@@ -140,43 +148,45 @@ class _MainPageState extends ConsumerState<MainPage> {
         final fileExists = File(file.filePath).existsSync();
         final isSelected = _selectedFile?.id == file.id;
 
-        return ListTile(
-          dense: true,
-          leading: Icon(
-            fileExists ? Icons.insert_drive_file : Icons.error_outline,
-            size: 20,
-            color: fileExists ? AppColors.textSecondary : AppColors.error,
-          ),
-          title: Text(
-            file.fileName,
-            style: AppTextStyles.body.copyWith(
-              color: fileExists ? AppColors.textPrimary : AppColors.error,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+        return Material(
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              fileExists ? Icons.insert_drive_file : Icons.error_outline,
+              size: 20,
+              color: fileExists ? AppColors.textSecondary : AppColors.error,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                file.filePath,
-                style: AppTextStyles.caption,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            title: Text(
+              file.fileName,
+              style: AppTextStyles.body.copyWith(
+                color: fileExists ? AppColors.textPrimary : AppColors.error,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               ),
-              if (file.lastAccessedAt != null)
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  '最近访问: ${DateFormat('MM-dd HH:mm').format(file.lastAccessedAt!)}',
-                  style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                  file.filePath,
+                  style: AppTextStyles.caption,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-            ],
+                if (file.lastAccessedAt != null)
+                  Text(
+                    '最近访问: ${DateFormat('MM-dd HH:mm').format(file.lastAccessedAt!)}',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                  ),
+              ],
+            ),
+            trailing: const Icon(Icons.chevron_right, size: 16, color: AppColors.textSecondary),
+            selected: isSelected,
+            selectedColor: AppColors.accent,
+            selectedTileColor: AppColors.secondary,
+            onTap: () => _onFileTap(file),
           ),
-          trailing: const Icon(Icons.chevron_right, size: 16, color: AppColors.textSecondary),
-          selected: isSelected,
-          selectedColor: AppColors.accent,
-          selectedTileColor: AppColors.secondary,
-          onTap: () => _onFileTap(file),
         );
       },
     );
@@ -271,6 +281,12 @@ class _MainPageState extends ConsumerState<MainPage> {
                   Text('时间轴', style: AppTextStyles.heading3),
                   const Spacer(),
                   IconButton(
+                    icon: const Icon(Icons.edit_note, size: 18),
+                    tooltip: '编辑',
+                    onPressed: _selectedFile != null ? () => _showEditorView() : null,
+                    disabledColor: AppColors.textSecondary,
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.refresh, size: 18),
                     tooltip: '刷新',
                     onPressed: () {},
@@ -279,6 +295,12 @@ class _MainPageState extends ConsumerState<MainPage> {
                     icon: const Icon(Icons.compare_arrows, size: 18),
                     tooltip: '对比',
                     onPressed: _selectedFile != null ? () => _showCompareView(commitHistory) : null,
+                    disabledColor: AppColors.textSecondary,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.commit, size: 18),
+                    tooltip: '提交',
+                    onPressed: _selectedFile != null ? () => _showCommitDialog() : null,
                     disabledColor: AppColors.textSecondary,
                   ),
                 ],
@@ -424,6 +446,44 @@ class _MainPageState extends ConsumerState<MainPage> {
             file: _selectedFile!,
             commits: commitHistory.value ?? [],
           ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showCommitDialog() async {
+    if (_selectedFile == null) return;
+
+    final commitDialog = ref.read(commitDialogProvider);
+    final result = await commitDialog.show(
+      context: context,
+      repoPath: _selectedFile!.repoPath ?? '',
+      diff: '',
+      fileName: _selectedFile!.fileName,
+    );
+
+    if (result == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('提交成功')),
+      );
+    }
+  }
+
+  void _showAiAgentView() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AiAgentView(file: _selectedFile),
+      ),
+    );
+  }
+
+  void _showEditorView() {
+    if (_selectedFile != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TextEditorView(file: _selectedFile!),
         ),
       );
     }

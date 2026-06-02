@@ -238,4 +238,50 @@ class GitService {
 
     return commitOid.sha;
   }
+
+  Future<void> addFile(String repoPath, String fileName) async {
+    final repo = Repository.open(repoPath);
+    
+    final index = repo.index;
+    index.add(fileName);
+    index.write();
+    index.free();
+    
+    repo.free();
+  }
+
+  Future<String> commit(String repoPath, String message) async {
+    final repo = Repository.open(repoPath);
+
+    final index = repo.index;
+    final treeOid = index.writeTree();
+    final tree = Tree.lookup(repo: repo, oid: treeOid);
+    index.free();
+
+    final head = repo.head;
+    final parentCommit = Commit.lookup(repo: repo, oid: head.target);
+    head.free();
+
+    final signature = Signature.create(
+      name: '简控',
+      email: 'easy_versions_controller@local',
+    );
+
+    final commitOid = Commit.create(
+      repo: repo,
+      updateRef: 'HEAD',
+      message: message,
+      author: signature,
+      committer: signature,
+      tree: tree,
+      parents: [parentCommit],
+    );
+
+    signature.free();
+    parentCommit.free();
+    tree.free();
+    repo.free();
+
+    return commitOid.sha;
+  }
 }

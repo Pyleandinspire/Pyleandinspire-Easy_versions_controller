@@ -1,75 +1,103 @@
-import 'dart:async';
 import 'dart:io';
-import 'package:watcher/watcher.dart';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:watcher/watcher.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/viewmodels/git_provider.dart';
-import 'package:easy_versions_controller/viewmodels/tracked_file_provider.dart';
+import 'package:easy_versions_controller/services/git_service.dart';
+import 'package:easy_versions_controller/views/settings_dialog.dart';
+
+final fileWatcherProvider = Provider<FileWatcherService>((ref) {
+  return FileWatcherService(ref);
+});
 
 class FileWatcherService {
   final Ref _ref;
   final Map<String, DirectoryWatcher> _watchers = {};
-  Timer? _checkTimer;
+  final Map<String, StreamSubscription> _subscriptions = {};
+  final Map<String, DateTime> _lastModified = {};
+  final Map<String, Timer> _debounceTimers = {};
 
   FileWatcherService(this._ref);
 
-  Future<void> startWatching(TrackedFile file) async {
-    if (_watchers.containsKey(file.id)) {
-      return;
-    }
+  void startWatching(TrackedFile file) {
+    if (_watchers.containsKey(file.id)) return;
 
-    final fileDirectory = Directory(file.filePath).parent.path;
-    final watcher = DirectoryWatcher(fileDirectory);
+    final directory = File(file.filePath).parent;
+    final watcher = DirectoryWatcher(directory.path);
 
-    watcher.events.listen((event) async {
-      if (event.path == file.filePath && event.type != ChangeType.REMOVE) {
-        await _handleFileChange(file);
+    final subscription = watcher.events.listen((event) {
+      if (event.path == file.filePath) {
+        _handleFileChange(file, event);
       }
     });
 
     _watchers[file.id] = watcher;
+    _subscriptions[file.id] = subscription;
   }
 
   void stopWatching(String fileId) {
+    final subscription = _subscriptions.remove(fileId);
+    if (subscription != null) {
+      subscription.cancel();
+    }
+
     _watchers.remove(fileId);
+
+    final timer = _debounceTimers.remove(fileId);
+    if (timer != null) {
+      timer.cancel();
+    }
+
+    _lastModified.remove(fileId);
   }
 
   void stopAllWatching() {
+    _subscriptions.values.forEach((subscription) => subscription.cancel());
+    _subscriptions.clear();
+
     _watchers.clear();
-    _checkTimer?.cancel();
+
+    _debounceTimers.values.forEach((timer) => timer.cancel());
+    _debounceTimers.clear();
+
+    _lastModified.clear();
   }
 
-  Future<void> _handleFileChange(TrackedFile file) async {
+  void _handleFileChange(TrackedFile file, WatchEvent event) {
+    if (event.type == ChangeType.MODIFY) {
+      final now = DateTime.now();
+      final lastTime = _lastModified[file.id];
+
+      if (lastTime != null && now.difference(lastTime).inSeconds < 1) {
+        return;
+      }
+
+      _lastModified[file.id] = now;
+
+      final existingTimer = _debounceTimers[file.id];
+      if (existingTimer != null) {
+        existingTimer.cancel();
+      }
+
+      final settings = _ref.read(settingsProvider);
+      final delaySeconds = settings.autoSaveDelay;
+
+      _debounceTimers[file.id] = Timer(Duration(seconds: delaySeconds), () {
+        _triggerAutoSave(file);
+      });
+    }
+  }
+
+  Future<void> _triggerAutoSave(TrackedFile file) async {
     try {
-      final gitService = _ref.read(gitServiceProvider);
-      
+      final gitService = GitService();
       await gitService.commitChanges(
         repoPath: file.repoPath ?? '',
         fileName: file.fileName,
         originalFilePath: file.filePath,
       );
-
-      await _ref.read(trackedFileListProvider.notifier).updateLastAccessed(file.id);
     } catch (e) {
-      print('Error auto-saving file ${file.fileName}: $e');
-    }
-  }
-
-  void startPeriodicCheck(Duration interval) {
-    _checkTimer?.cancel();
-    _checkTimer = Timer.periodic(interval, (_) async {
-      await _checkAllFiles();
-    });
-  }
-
-  Future<void> _checkAllFiles() async {
-    final filesAsync = _ref.read(trackedFileListProvider);
-    if (filesAsync is AsyncData<List<TrackedFile>>) {
-      for (final file in filesAsync.value) {
-        if (File(file.filePath).existsSync()) {
-          startWatching(file);
-        }
-      }
+      print('Auto save failed: $e');
     }
   }
 }

@@ -94,6 +94,12 @@ class AppTextStyles {
         color: AppColors.accent,
         fontWeight: FontWeight.w500,
       );
+
+  static TextStyle get button => const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: Colors.white,
+      );
 }
 
 ThemeData get appTheme {
