@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:watcher/watcher.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/services/auto_save_timer_service.dart';
+import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 
 final fileWatcherProvider = Provider<FileWatcherService>((ref) {
@@ -99,14 +99,13 @@ class FileWatcherService {
     statusNotifier.markSaving();
 
     try {
-      final gitService = _ref.read(gitServiceProvider);
-      await gitService.commitChanges(
-        repoPath: file.repoPath ?? '',
+      final snapshotService = _ref.read(snapshotServiceProvider);
+      await snapshotService.createAutoSnapshot(
+        fileId: file.id,
+        filePath: file.filePath,
         fileName: file.fileName,
-        originalFilePath: file.filePath,
       );
 
-      // 提交成功后重置状态，避免长计时器重复提交
       final autoSaveTimer = _ref.read(autoSaveTimerProvider);
       autoSaveTimer.markFileSaved(file);
 

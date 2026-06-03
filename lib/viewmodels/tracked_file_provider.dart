@@ -3,14 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
 import 'package:easy_versions_controller/services/database_service.dart';
+import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/viewmodels/file_picker_provider.dart';
 import 'package:easy_versions_controller/viewmodels/file_scan_provider.dart';
-import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 
 final trackedFileListProvider =
     AsyncNotifierProvider<TrackedFileListNotifier, List<TrackedFile>>(
-  TrackedFileListNotifier.new,
-);
+      TrackedFileListNotifier.new,
+    );
 
 class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
   final Uuid _uuid = const Uuid();
@@ -23,8 +23,8 @@ class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
 
   Future<void> addFiles() async {
     final pickerService = ref.read(filePickerServiceProvider);
-    final gitService = ref.read(gitServiceProvider);
     final dbService = ref.read(databaseServiceProvider);
+    final snapshotService = ref.read(snapshotServiceProvider);
 
     final paths = await pickerService.pickFiles();
     if (paths.isEmpty) return;
@@ -36,27 +36,32 @@ class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
       final fileId = _uuid.v4();
       final fileName = filePath.split('/').last;
 
-      final repoPath = await gitService.initRepoForFile(
-        filePath: filePath,
-        fileId: fileId,
-      );
-
       final trackedFile = TrackedFile(
         id: fileId,
         filePath: filePath,
         fileName: fileName,
-        repoPath: repoPath,
-        addedAt: DateTime.now(),
+        createdAt: DateTime.now(),
       );
 
       await dbService.insertTrackedFile(trackedFile);
+
+      // 创建初始快照
+      await snapshotService.createInitialSnapshot(
+        fileId: fileId,
+        filePath: filePath,
+        fileName: fileName,
+      );
     }
 
     state = AsyncData(await dbService.getAllTrackedFiles());
   }
 
-  Future<void> removeFile(String fileId) async {
+  Future<void> removeFile(String fileId, {bool deleteSnapshots = false}) async {
     final dbService = ref.read(databaseServiceProvider);
+    if (deleteSnapshots) {
+      final snapshotService = ref.read(snapshotServiceProvider);
+      await snapshotService.deleteSnapshotFiles(fileId);
+    }
     await dbService.deleteTrackedFile(fileId);
     state = AsyncData(await dbService.getAllTrackedFiles());
   }
@@ -65,7 +70,7 @@ class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
     final dbService = ref.read(databaseServiceProvider);
     final file = await dbService.getTrackedFileById(fileId);
     if (file != null) {
-      final updated = file.copyWith(lastAccessedAt: DateTime.now());
+      final updated = file.copyWith(updatedAt: DateTime.now());
       await dbService.updateTrackedFile(updated);
       state = AsyncData(await dbService.getAllTrackedFiles());
     }
@@ -79,7 +84,7 @@ class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
     final scanService = ref.read(fileScanServiceProvider);
     return scanService.scanForFile(
       fileName: fileName,
-      timeout: const Duration(minutes: 3),
+      timeout: const Duration(minutes: 5),
     );
   }
 
@@ -90,7 +95,7 @@ class TrackedFileListNotifier extends AsyncNotifier<List<TrackedFile>> {
       final updated = file.copyWith(
         filePath: newPath,
         fileName: newPath.split('/').last,
-        lastAccessedAt: DateTime.now(),
+        updatedAt: DateTime.now(),
       );
       await dbService.updateTrackedFile(updated);
       state = AsyncData(await dbService.getAllTrackedFiles());

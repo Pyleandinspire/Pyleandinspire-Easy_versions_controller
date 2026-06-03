@@ -4,44 +4,37 @@ import 'package:intl/intl.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/services/diff_service.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
+import 'package:easy_versions_controller/models/snapshot.dart';
 
-final diffProvider = FutureProvider.family<List<DiffLine>, ({TrackedFile file, String? fromOid, String? toOid})>(
-  (ref, args) async {
-    if (args.fromOid == null) {
+/// 基于快照的文件差异对比 Provider
+final snapshotDiffProvider =
+    FutureProvider.family<
+      List<DiffLine>,
+      ({TrackedFile file, Snapshot? snapshot})
+    >((ref, args) async {
       final diffService = ref.read(diffServiceProvider);
-      return await diffService.getDiffFromCommit(
-        repoPath: args.file.repoPath ?? '',
-        commitOid: args.toOid ?? '',
-        fileName: args.file.fileName,
+
+      if (args.snapshot == null) {
+        return <DiffLine>[];
+      }
+
+      return diffService.getDiffBetweenFiles(
+        fromFilePath: args.snapshot!.snapshotPath,
+        toFilePath: args.file.filePath,
       );
-    }
-    final diffService = ref.read(diffServiceProvider);
-    return await diffService.getDiffBetweenVersions(
-      repoPath: args.file.repoPath ?? '',
-      fromOid: args.fromOid ?? '',
-      toOid: args.toOid ?? '',
-      fileName: args.file.fileName,
-    );
-  },
-);
+    });
 
 class CompareView extends ConsumerStatefulWidget {
   final TrackedFile file;
-  final List<Map<String, dynamic>> commits;
+  final Snapshot? snapshot;
 
-  const CompareView({
-    super.key,
-    required this.file,
-    required this.commits,
-  });
+  const CompareView({super.key, required this.file, this.snapshot});
 
   @override
   ConsumerState<CompareView> createState() => _CompareViewState();
 }
 
 class _CompareViewState extends ConsumerState<CompareView> {
-  String? _fromOid;
-  String? _toOid;
   bool _sideBySide = true;
   int _currentDiffIndex = -1;
   List<DiffLine> _currentDiffs = [];
@@ -52,15 +45,28 @@ class _CompareViewState extends ConsumerState<CompareView> {
   @override
   void initState() {
     super.initState();
-    if (widget.commits.length >= 2) {
-      _fromOid = widget.commits[1]['oid'] as String;
-      _toOid = widget.commits[0]['oid'] as String;
-    } else if (widget.commits.length == 1) {
-      _toOid = widget.commits[0]['oid'] as String;
-    }
+
+    // 加载差异数据
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDiff();
+    });
 
     _leftScrollController.addListener(_syncScroll);
     _rightScrollController.addListener(_syncScroll);
+  }
+
+  Future<void> _loadDiff() async {
+    final diffService = ref.read(diffServiceProvider);
+
+    if (widget.snapshot != null) {
+      final diffs = await diffService.getDiffBetweenFiles(
+        fromFilePath: widget.snapshot!.snapshotPath,
+        toFilePath: widget.file.filePath,
+      );
+      setState(() {
+        _currentDiffs = diffs;
+      });
+    }
   }
 
   @override
@@ -126,46 +132,35 @@ class _CompareViewState extends ConsumerState<CompareView> {
   }
 
   Widget _buildVersionDropdown(bool isLeft) {
-    final currentOid = isLeft ? _fromOid : _toOid;
-    
-    return DropdownButton<String?>(
-      value: currentOid,
-      hint: Text(isLeft ? '选择基准版本' : '选择对比版本'),
-      items: [
-        if (isLeft)
-          const DropdownMenuItem(
-            value: null,
-            child: Text('初始状态'),
+    final label = widget.snapshot != null
+        ? DateFormat('MM-dd HH:mm').format(widget.snapshot!.timestamp)
+        : 'N/A';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isLeft ? Icons.history : Icons.file_present,
+            size: 14,
+            color: AppColors.accent,
           ),
-        ...widget.commits.map((commit) {
-          final oid = commit['oid'] as String;
-          final time = commit['time'] as int;
-          final message = commit['message'] as String;
-          final dateStr = DateFormat('MM-dd HH:mm').format(
-            DateTime.fromMillisecondsSinceEpoch(time * 1000),
-          );
-          
-          return DropdownMenuItem(
-            value: oid,
+          const SizedBox(width: 8),
+          Flexible(
             child: Text(
-              '$dateStr - ${message.trim().split('\n').first}',
+              isLeft ? '快照: $label' : '当前: ${widget.file.fileName}',
+              style: AppTextStyles.body,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-          );
-        }),
-      ],
-      onChanged: (value) {
-        setState(() {
-          if (isLeft) {
-            _fromOid = value;
-          } else {
-            _toOid = value;
-          }
-          _currentDiffIndex = -1;
-        });
-      },
-      isExpanded: true,
+          ),
+        ],
+      ),
     );
   }
 
@@ -176,7 +171,9 @@ class _CompareViewState extends ConsumerState<CompareView> {
     if (showLeft) {
       if (line.type == DiffLineType.removed || line.type == DiffLineType.same) {
         child = Text(line.content, style: AppTextStyles.body);
-        bgColor = line.type == DiffLineType.removed ? AppColors.diffRemoved : null;
+        bgColor = line.type == DiffLineType.removed
+            ? AppColors.diffRemoved
+            : null;
       } else {
         child = const SizedBox();
         bgColor = null;
@@ -200,8 +197,12 @@ class _CompareViewState extends ConsumerState<CompareView> {
             padding: const EdgeInsets.symmetric(horizontal: 8),
             alignment: Alignment.centerRight,
             child: Text(
-              showLeft ? (line.oldLineNumber > 0 ? '${line.oldLineNumber}' : '') : (line.newLineNumber > 0 ? '${line.newLineNumber}' : ''),
-              style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+              showLeft
+                  ? (line.oldLineNumber > 0 ? '${line.oldLineNumber}' : '')
+                  : (line.newLineNumber > 0 ? '${line.newLineNumber}' : ''),
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
           Expanded(child: child),
@@ -213,7 +214,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
   Widget _buildSideBySideView(List<DiffLine> diffs) {
     _currentDiffs = diffs;
     final diffLines = diffs.where((d) => d.type != DiffLineType.same).toList();
-    
+
     return Column(
       children: [
         Row(
@@ -331,10 +332,16 @@ class _CompareViewState extends ConsumerState<CompareView> {
                   children: [
                     SizedBox(
                       width: 24,
-                      child: Text(prefix, style: AppTextStyles.caption.copyWith(
-                        color: line.type == DiffLineType.added ? AppColors.success : 
-                               line.type == DiffLineType.removed ? AppColors.error : AppColors.textSecondary,
-                      )),
+                      child: Text(
+                        prefix,
+                        style: AppTextStyles.caption.copyWith(
+                          color: line.type == DiffLineType.added
+                              ? AppColors.success
+                              : line.type == DiffLineType.removed
+                              ? AppColors.error
+                              : AppColors.textSecondary,
+                        ),
+                      ),
                     ),
                     Container(
                       width: 40,
@@ -342,7 +349,9 @@ class _CompareViewState extends ConsumerState<CompareView> {
                       alignment: Alignment.centerRight,
                       child: Text(
                         line.oldLineNumber > 0 ? '${line.oldLineNumber}' : '',
-                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -352,7 +361,9 @@ class _CompareViewState extends ConsumerState<CompareView> {
                       alignment: Alignment.centerRight,
                       child: Text(
                         line.newLineNumber > 0 ? '${line.newLineNumber}' : '',
-                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -365,7 +376,9 @@ class _CompareViewState extends ConsumerState<CompareView> {
             },
           ),
         ),
-        _buildNavigationBar(diffs.where((d) => d.type != DiffLineType.same).length),
+        _buildNavigationBar(
+          diffs.where((d) => d.type != DiffLineType.same).length,
+        ),
       ],
     );
   }
@@ -382,16 +395,22 @@ class _CompareViewState extends ConsumerState<CompareView> {
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left, size: 20),
-            onPressed: _currentDiffIndex > 0 ? () => _navigateToDiff(_currentDiffIndex - 1) : null,
+            onPressed: _currentDiffIndex > 0
+                ? () => _navigateToDiff(_currentDiffIndex - 1)
+                : null,
             disabledColor: AppColors.textSecondary,
           ),
           Text(
-            _currentDiffIndex >= 0 ? '差异 ${_currentDiffIndex + 1}/$diffCount' : '$diffCount 个差异',
+            _currentDiffIndex >= 0
+                ? '差异 ${_currentDiffIndex + 1}/$diffCount'
+                : '$diffCount 个差异',
             style: AppTextStyles.caption,
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right, size: 20),
-            onPressed: _currentDiffIndex < diffCount - 1 ? () => _navigateToDiff(_currentDiffIndex + 1) : null,
+            onPressed: _currentDiffIndex < diffCount - 1
+                ? () => _navigateToDiff(_currentDiffIndex + 1)
+                : null,
             disabledColor: AppColors.textSecondary,
           ),
           const Spacer(),
@@ -411,14 +430,6 @@ class _CompareViewState extends ConsumerState<CompareView> {
 
   @override
   Widget build(BuildContext context) {
-    final diffsAsync = ref.watch(
-      diffProvider((
-        file: widget.file,
-        fromOid: _fromOid,
-        toOid: _toOid,
-      )),
-    );
-
     return Scaffold(
       appBar: AppBar(
         title: Text('对比 ${widget.file.fileName}'),
@@ -426,12 +437,45 @@ class _CompareViewState extends ConsumerState<CompareView> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          if (widget.snapshot != null)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Text(
+                  '快照: ${DateFormat('MM-dd HH:mm').format(widget.snapshot!.timestamp)}',
+                  style: AppTextStyles.caption,
+                ),
+              ),
+            ),
+          IconButton(
+            icon: Icon(_sideBySide ? Icons.view_agenda : Icons.view_column),
+            tooltip: _sideBySide ? '统一视图' : '并排视图',
+            onPressed: () => setState(() => _sideBySide = !_sideBySide),
+          ),
+        ],
       ),
-      body: diffsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('加载失败: $e', style: AppTextStyles.bodySecondary)),
-        data: (diffs) => _sideBySide ? _buildSideBySideView(diffs) : _buildUnifiedView(diffs),
-      ),
+      body: _currentDiffs.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.compare_arrows,
+                    size: 48,
+                    color: Color(0xFFCBD5E1),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    widget.snapshot == null ? '请从时间轴选择快照进行对比' : '未检测到差异',
+                    style: AppTextStyles.bodySecondary,
+                  ),
+                ],
+              ),
+            )
+          : _sideBySide
+          ? _buildSideBySideView(_currentDiffs)
+          : _buildUnifiedView(_currentDiffs),
     );
   }
 }

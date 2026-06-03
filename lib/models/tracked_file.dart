@@ -2,17 +2,17 @@ class TrackedFile {
   final String id;
   final String filePath;
   final String fileName;
-  final String? repoPath;
-  final DateTime addedAt;
-  final DateTime? lastAccessedAt;
+  final String? snapshotDir;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
 
   const TrackedFile({
     required this.id,
     required this.filePath,
     required this.fileName,
-    this.repoPath,
-    required this.addedAt,
-    this.lastAccessedAt,
+    this.snapshotDir,
+    required this.createdAt,
+    this.updatedAt,
   });
 
   Map<String, dynamic> toMap() {
@@ -20,9 +20,9 @@ class TrackedFile {
       'id': id,
       'filePath': filePath,
       'fileName': fileName,
-      'repoPath': repoPath,
-      'addedAt': addedAt.toIso8601String(),
-      'lastAccessedAt': lastAccessedAt?.toIso8601String(),
+      'snapshotDir': snapshotDir,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt?.toIso8601String(),
     };
   }
 
@@ -31,10 +31,10 @@ class TrackedFile {
       id: map['id'] as String,
       filePath: map['filePath'] as String,
       fileName: map['fileName'] as String,
-      repoPath: map['repoPath'] as String?,
-      addedAt: DateTime.parse(map['addedAt'] as String),
-      lastAccessedAt: map['lastAccessedAt'] != null
-          ? DateTime.parse(map['lastAccessedAt'] as String)
+      snapshotDir: map['snapshotDir'] as String?,
+      createdAt: DateTime.parse(map['createdAt'] as String),
+      updatedAt: map['updatedAt'] != null
+          ? DateTime.parse(map['updatedAt'] as String)
           : null,
     );
   }
@@ -43,17 +43,17 @@ class TrackedFile {
     String? id,
     String? filePath,
     String? fileName,
-    String? repoPath,
-    DateTime? addedAt,
-    DateTime? lastAccessedAt,
+    String? snapshotDir,
+    DateTime? createdAt,
+    DateTime? updatedAt,
   }) {
     return TrackedFile(
       id: id ?? this.id,
       filePath: filePath ?? this.filePath,
       fileName: fileName ?? this.fileName,
-      repoPath: repoPath ?? this.repoPath,
-      addedAt: addedAt ?? this.addedAt,
-      lastAccessedAt: lastAccessedAt ?? this.lastAccessedAt,
+      snapshotDir: snapshotDir ?? this.snapshotDir,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 }

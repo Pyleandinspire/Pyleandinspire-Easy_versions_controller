@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 
 final editorProvider = Provider<TextEditorService>((ref) {
   return TextEditorService(ref);
@@ -27,23 +26,20 @@ class TextEditorService {
     await file.writeAsString(content);
   }
 
-  Future<void> autoSave(String repoPath, String fileName, String originalFilePath) async {
-    final gitService = _ref.read(gitServiceProvider);
-    await gitService.commitChanges(
-      repoPath: repoPath,
-      fileName: fileName,
-      originalFilePath: originalFilePath,
-    );
+  Future<void> autoSave(
+    String repoPath,
+    String fileName,
+    String originalFilePath,
+  ) async {
+    // TODO: 实现快照保存逻辑 (步骤 2.6.4)
+    // 当前暂不执行任何 Git 操作
   }
 }
 
 class TextEditorView extends ConsumerStatefulWidget {
   final TrackedFile file;
 
-  const TextEditorView({
-    super.key,
-    required this.file,
-  });
+  const TextEditorView({super.key, required this.file});
 
   @override
   ConsumerState<TextEditorView> createState() => _TextEditorViewState();
@@ -113,7 +109,7 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
     _history.removeRange(_historyIndex + 1, _history.length);
     _history.add(_textController.text);
     _historyIndex = _history.length - 1;
-    
+
     if (_history.length > 50) {
       _history.removeAt(0);
       _historyIndex--;
@@ -145,9 +141,9 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       final editorService = ref.read(editorProvider);
       await editorService.writeFile(widget.file.filePath, _textController.text);
 
-      if (widget.file.repoPath != null) {
+      if (widget.file.snapshotDir != null) {
         await editorService.autoSave(
-          widget.file.repoPath!,
+          widget.file.snapshotDir!,
           widget.file.fileName,
           widget.file.filePath,
         );
@@ -157,36 +153,18 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       setState(() => _hasChanges = false);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存成功')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('保存成功')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
       }
     } finally {
       setState(() => _isSaving = false);
-    }
-  }
-
-  Future<void> _restoreFromCommit(String commitSha) async {
-    final gitService = ref.read(gitServiceProvider);
-    await gitService.restoreFileFromCommit(
-      repoPath: widget.file.repoPath ?? '',
-      commitSha: commitSha,
-      fileName: widget.file.fileName,
-      targetFilePath: widget.file.filePath,
-    );
-    
-    await _loadFileContent();
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已恢复到历史版本')),
-      );
     }
   }
 
@@ -265,13 +243,11 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
 
   Widget _buildLineNumbers() {
     final lineNumbers = _getLineNumbers();
-    
+
     return Container(
       width: 50,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-      decoration: const BoxDecoration(
-        color: AppColors.secondary,
-      ),
+      decoration: const BoxDecoration(color: AppColors.secondary),
       child: ListView.builder(
         controller: _lineScrollController,
         itemCount: lineNumbers.length,
@@ -280,7 +256,9 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
             height: 20,
             child: Text(
               '${lineNumbers[index]}',
-              style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
               textAlign: TextAlign.right,
             ),
           );
@@ -315,8 +293,15 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       onPressed: _saveFile,
       backgroundColor: _hasChanges ? AppColors.accent : AppColors.textSecondary,
       foregroundColor: Colors.white,
-      child: _isSaving 
-          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+      child: _isSaving
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
           : const Icon(Icons.save),
       tooltip: '保存',
     );

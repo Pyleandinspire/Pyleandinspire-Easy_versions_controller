@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/viewmodels/tracked_file_provider.dart';
 import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
+import 'package:easy_versions_controller/services/snapshot_service.dart';
 
 final autoSaveTimerProvider = Provider<AutoSaveTimerService>((ref) {
   return AutoSaveTimerService(ref);
@@ -62,13 +62,13 @@ class AutoSaveTimerService {
     statusNotifier.markSaving();
 
     try {
-      final gitService = _ref.read(gitServiceProvider);
-      await gitService.commitChanges(
-        repoPath: file.repoPath ?? '',
+      final snapshotService = _ref.read(snapshotServiceProvider);
+      await snapshotService.createAutoSnapshot(
+        fileId: file.id,
+        filePath: file.filePath,
         fileName: file.fileName,
-        originalFilePath: file.filePath,
       );
-      
+
       markFileSaved(file);
       statusNotifier.markSaved();
     } catch (e) {
