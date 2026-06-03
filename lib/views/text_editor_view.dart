@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
+import 'package:easy_versions_controller/services/snapshot_service.dart';
 
 final editorProvider = Provider<TextEditorService>((ref) {
   return TextEditorService(ref);
@@ -24,15 +25,6 @@ class TextEditorService {
   Future<void> writeFile(String filePath, String content) async {
     final file = File(filePath);
     await file.writeAsString(content);
-  }
-
-  Future<void> autoSave(
-    String repoPath,
-    String fileName,
-    String originalFilePath,
-  ) async {
-    // TODO: 实现快照保存逻辑 (步骤 2.6.4)
-    // 当前暂不执行任何 Git 操作
   }
 }
 
@@ -141,21 +133,24 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       final editorService = ref.read(editorProvider);
       await editorService.writeFile(widget.file.filePath, _textController.text);
 
-      if (widget.file.snapshotDir != null) {
-        await editorService.autoSave(
-          widget.file.snapshotDir!,
-          widget.file.fileName,
-          widget.file.filePath,
-        );
-      }
+      // 保存后自动创建快照
+      final snapshotService = ref.read(snapshotServiceProvider);
+      await snapshotService.createAutoSnapshot(
+        fileId: widget.file.id,
+        filePath: widget.file.filePath,
+        fileName: widget.file.fileName,
+      );
 
       _saveToHistory();
       setState(() => _hasChanges = false);
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('保存成功')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('保存成功，已创建新版本快照'),
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
