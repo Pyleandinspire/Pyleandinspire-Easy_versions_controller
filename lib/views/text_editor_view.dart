@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/services/git_service.dart';
+import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 
 final editorProvider = Provider<TextEditorService>((ref) {
   return TextEditorService(ref);
@@ -28,7 +28,7 @@ class TextEditorService {
   }
 
   Future<void> autoSave(String repoPath, String fileName, String originalFilePath) async {
-    final gitService = GitService();
+    final gitService = _ref.read(gitServiceProvider);
     await gitService.commitChanges(
       repoPath: repoPath,
       fileName: fileName,
@@ -51,7 +51,9 @@ class TextEditorView extends ConsumerStatefulWidget {
 
 class _TextEditorViewState extends ConsumerState<TextEditorView> {
   late TextEditingController _textController;
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _lineScrollController = ScrollController();
+  final ScrollController _textScrollController = ScrollController();
+  bool _isSyncingScroll = false;
   bool _hasChanges = false;
   bool _isSaving = false;
   final List<String> _history = [];
@@ -63,14 +65,33 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
     _textController = TextEditingController();
     _loadFileContent();
     _textController.addListener(_onTextChanged);
+    _lineScrollController.addListener(_syncFromLineScroll);
+    _textScrollController.addListener(_syncFromTextScroll);
   }
 
   @override
   void dispose() {
     _textController.removeListener(_onTextChanged);
+    _lineScrollController.removeListener(_syncFromLineScroll);
+    _textScrollController.removeListener(_syncFromTextScroll);
     _textController.dispose();
-    _scrollController.dispose();
+    _lineScrollController.dispose();
+    _textScrollController.dispose();
     super.dispose();
+  }
+
+  void _syncFromLineScroll() {
+    if (_isSyncingScroll) return;
+    _isSyncingScroll = true;
+    _textScrollController.jumpTo(_lineScrollController.offset);
+    _isSyncingScroll = false;
+  }
+
+  void _syncFromTextScroll() {
+    if (_isSyncingScroll) return;
+    _isSyncingScroll = true;
+    _lineScrollController.jumpTo(_textScrollController.offset);
+    _isSyncingScroll = false;
   }
 
   Future<void> _loadFileContent() async {
@@ -152,7 +173,7 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   }
 
   Future<void> _restoreFromCommit(String commitSha) async {
-    final gitService = GitService();
+    final gitService = ref.read(gitServiceProvider);
     await gitService.restoreFileFromCommit(
       repoPath: widget.file.repoPath ?? '',
       commitSha: commitSha,
@@ -252,13 +273,16 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
         color: AppColors.secondary,
       ),
       child: ListView.builder(
-        controller: _scrollController,
+        controller: _lineScrollController,
         itemCount: lineNumbers.length,
         itemBuilder: (context, index) {
-          return Text(
-            '${lineNumbers[index]}',
-            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
-            textAlign: TextAlign.right,
+          return SizedBox(
+            height: 20,
+            child: Text(
+              '${lineNumbers[index]}',
+              style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+              textAlign: TextAlign.right,
+            ),
           );
         },
       ),
@@ -267,7 +291,7 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
 
   Widget _buildTextArea() {
     return SingleChildScrollView(
-      controller: _scrollController,
+      controller: _textScrollController,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.sm),
         child: TextField(

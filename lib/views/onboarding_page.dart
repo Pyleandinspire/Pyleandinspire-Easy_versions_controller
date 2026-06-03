@@ -27,7 +27,9 @@ class OnboardingService {
 }
 
 class OnboardingPage extends ConsumerStatefulWidget {
-  const OnboardingPage({super.key});
+  final VoidCallback? onComplete;
+
+  const OnboardingPage({super.key, this.onComplete});
 
   @override
   ConsumerState<OnboardingPage> createState() => _OnboardingPageState();
@@ -96,7 +98,11 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     await onboardingService.markOnboardingShown();
     
     if (mounted) {
-      Navigator.of(context).pop();
+      if (widget.onComplete != null) {
+        widget.onComplete!();
+      } else {
+        Navigator.of(context).pop();
+      }
     }
   }
 

@@ -14,6 +14,8 @@ import 'package:easy_versions_controller/views/compare_view.dart';
 import 'package:easy_versions_controller/views/commit_dialog.dart';
 import 'package:easy_versions_controller/views/ai_agent_view.dart';
 import 'package:easy_versions_controller/views/text_editor_view.dart';
+import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
+import 'package:easy_versions_controller/services/notification_service.dart';
 
 final commitHistoryProvider = FutureProvider.family<List<Map<String, dynamic>>, TrackedFile?>((ref, file) async {
   if (file == null) return [];
@@ -35,6 +37,22 @@ class _MainPageState extends ConsumerState<MainPage> {
   Widget build(BuildContext context) {
     final filesAsync = ref.watch(trackedFileListProvider);
     final commitHistory = ref.watch(commitHistoryProvider(_selectedFile));
+
+    // 监听自动保存状态变化，保存失败时弹出通知
+    ref.listen<AutoSaveState>(autoSaveStatusProvider, (prev, next) {
+      if (next.status == AutoSaveStatus.failed && prev?.status != AutoSaveStatus.failed) {
+        final notificationService = NotificationService();
+        notificationService.show(
+          context: context,
+          message: next.errorMessage ?? '保存失败',
+          type: AppNotificationType.error,
+          onTap: () {
+            notificationService.dismiss();
+            _showAiAgentView();
+          },
+        );
+      }
+    });
 
     return Scaffold(
       body: Column(
@@ -452,6 +470,37 @@ class _MainPageState extends ConsumerState<MainPage> {
   }
 
   Widget _buildStatusBar() {
+    final saveState = ref.watch(autoSaveStatusProvider);
+
+    IconData statusIcon;
+    Color statusColor;
+    String statusText;
+    String tooltip;
+
+    switch (saveState.status) {
+      case AutoSaveStatus.saved:
+        statusIcon = Icons.check_circle;
+        statusColor = AppColors.success;
+        statusText = '已保存';
+        break;
+      case AutoSaveStatus.saving:
+        statusIcon = Icons.circle;
+        statusColor = AppColors.warning;
+        statusText = '正在保存...';
+        break;
+      case AutoSaveStatus.failed:
+        statusIcon = Icons.warning;
+        statusColor = AppColors.error;
+        statusText = '保存失败';
+        break;
+    }
+
+    if (saveState.lastSaveTime != null) {
+      tooltip = '上次保存: ${DateFormat('HH:mm:ss').format(saveState.lastSaveTime!)}';
+    } else {
+      tooltip = statusText;
+    }
+
     return Container(
       height: 28,
       decoration: const BoxDecoration(
@@ -466,9 +515,17 @@ class _MainPageState extends ConsumerState<MainPage> {
           children: [
             Text('就绪', style: AppTextStyles.caption),
             const Spacer(),
-            const Icon(Icons.check_circle, size: 14, color: AppColors.success),
-            const SizedBox(width: AppSpacing.xs),
-            Text('已保存', style: AppTextStyles.caption),
+            Tooltip(
+              message: tooltip,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(statusIcon, size: 14, color: statusColor),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(statusText, style: AppTextStyles.caption),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -568,6 +625,35 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
   String _content = '';
   bool _isLoading = true;
   String? _error;
+  bool _isBinary = false;
+
+  // 常见文本文件扩展名
+  static const _textExtensions = {
+    'txt', 'md', 'markdown', 'dart', 'py', 'js', 'ts', 'tsx', 'jsx',
+    'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'go', 'rs', 'rb', 'php',
+    'html', 'css', 'scss', 'less', 'xml', 'json', 'yaml', 'yml',
+    'toml', 'ini', 'cfg', 'conf', 'sh', 'bash', 'zsh', 'bat',
+    'sql', 'gitignore', 'env', 'log', 'csv', 'tsv',
+    'swift', 'kt', 'scala', 'r', 'lua', 'pl', 'ex', 'exs',
+    'vue', 'svelte', 'astro', 'makefile', 'dockerfile',
+  };
+
+  // 图片文件扩展名
+  static const _imageExtensions = {
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico',
+  };
+
+  bool _isTextFile(String filePath) {
+    final ext = filePath.split('.').last.toLowerCase();
+    // 无扩展名的文件视为文本
+    if (!filePath.contains('.')) return true;
+    return _textExtensions.contains(ext);
+  }
+
+  bool _isImageFile(String filePath) {
+    final ext = filePath.split('.').last.toLowerCase();
+    return _imageExtensions.contains(ext);
+  }
 
   @override
   void initState() {
@@ -587,12 +673,50 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _isBinary = false;
     });
 
     try {
       final file = File(widget.file.filePath);
       if (await file.exists()) {
-        _content = await file.readAsString();
+        if (_isImageFile(widget.file.filePath)) {
+          // 图片文件用 Image 组件显示
+          setState(() {
+            _isBinary = true; // 标记为特殊类型，但不是错误
+            _isLoading = false;
+          });
+          return;
+        }
+
+        if (!_isTextFile(widget.file.filePath)) {
+          // 非文本文件，不尝试读取内容
+          setState(() {
+            _isBinary = true;
+            _isLoading = false;
+          });
+          return;
+        }
+
+        // 文本文件，尝试读取
+        final bytes = await file.readAsBytes();
+        // 检测是否包含空字节（二进制文件标志）
+        bool hasNullBytes = false;
+        for (int i = 0; i < bytes.length && i < 8192; i++) {
+          if (bytes[i] == 0) {
+            hasNullBytes = true;
+            break;
+          }
+        }
+
+        if (hasNullBytes) {
+          setState(() {
+            _isBinary = true;
+            _isLoading = false;
+          });
+          return;
+        }
+
+        _content = String.fromCharCodes(bytes);
       } else {
         _error = '文件不存在';
       }
@@ -624,6 +748,19 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
       );
     }
 
+    if (_isBinary) {
+      if (_isImageFile(widget.file.filePath)) {
+        return Center(
+          child: Image.file(
+            File(widget.file.filePath),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => _buildBinaryPlaceholder(),
+          ),
+        );
+      }
+      return _buildBinaryPlaceholder();
+    }
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       child: SingleChildScrollView(
@@ -632,6 +769,29 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
           style: AppTextStyles.body.copyWith(fontFamily: 'Monaco', fontSize: 13),
           textAlign: TextAlign.left,
         ),
+      ),
+    );
+  }
+
+  Widget _buildBinaryPlaceholder() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.insert_drive_file, size: 48, color: Color(0xFFCBD5E1)),
+          const SizedBox(height: AppSpacing.md),
+          Text('不支持预览此文件类型', style: AppTextStyles.bodySecondary),
+          const SizedBox(height: AppSpacing.sm),
+          ElevatedButton.icon(
+            onPressed: () => Process.run('open', [widget.file.filePath]),
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: const Text('使用系统默认程序打开'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -44,6 +44,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
   String? _toOid;
   bool _sideBySide = true;
   int _currentDiffIndex = -1;
+  List<DiffLine> _currentDiffs = [];
   final ScrollController _leftScrollController = ScrollController();
   final ScrollController _rightScrollController = ScrollController();
   bool _isLeftScrolling = false;
@@ -86,12 +87,41 @@ class _CompareViewState extends ConsumerState<CompareView> {
     }
   }
 
-  void _navigateToDiff(int index, List<DiffLine> diffs) {
+  void _navigateToDiff(int index) {
+    final diffs = _currentDiffs;
     final diffLines = diffs.where((d) => d.type != DiffLineType.same).toList();
-    if (diffLines.isNotEmpty && index >= 0 && index < diffLines.length) {
-      setState(() {
-        _currentDiffIndex = index;
-      });
+    if (diffLines.isEmpty || index < 0 || index >= diffLines.length) return;
+
+    setState(() {
+      _currentDiffIndex = index;
+    });
+
+    // 找到目标差异行在原始 diffs 列表中的索引
+    final targetLine = diffLines[index];
+    final targetIndex = diffs.indexOf(targetLine);
+
+    // 每行高度约 20px，滚动到目标位置
+    const double itemHeight = 20.0;
+    final scrollOffset = targetIndex * itemHeight;
+
+    // 确保滚动位置不超过最大范围
+    if (_leftScrollController.hasClients) {
+      final maxScroll = _leftScrollController.position.maxScrollExtent;
+      final target = scrollOffset.clamp(0.0, maxScroll);
+      _leftScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+    if (_rightScrollController.hasClients) {
+      final maxScroll = _rightScrollController.position.maxScrollExtent;
+      final target = scrollOffset.clamp(0.0, maxScroll);
+      _rightScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
     }
   }
 
@@ -181,6 +211,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
   }
 
   Widget _buildSideBySideView(List<DiffLine> diffs) {
+    _currentDiffs = diffs;
     final diffLines = diffs.where((d) => d.type != DiffLineType.same).toList();
     
     return Column(
@@ -243,6 +274,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
   }
 
   Widget _buildUnifiedView(List<DiffLine> diffs) {
+    _currentDiffs = diffs;
     return Column(
       children: [
         Row(
@@ -350,7 +382,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left, size: 20),
-            onPressed: _currentDiffIndex > 0 ? () => _navigateToDiff(_currentDiffIndex - 1, []) : null,
+            onPressed: _currentDiffIndex > 0 ? () => _navigateToDiff(_currentDiffIndex - 1) : null,
             disabledColor: AppColors.textSecondary,
           ),
           Text(
@@ -359,7 +391,7 @@ class _CompareViewState extends ConsumerState<CompareView> {
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right, size: 20),
-            onPressed: _currentDiffIndex < diffCount - 1 ? () => _navigateToDiff(_currentDiffIndex + 1, []) : null,
+            onPressed: _currentDiffIndex < diffCount - 1 ? () => _navigateToDiff(_currentDiffIndex + 1) : null,
             disabledColor: AppColors.textSecondary,
           ),
           const Spacer(),

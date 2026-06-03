@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/services/git_service.dart';
+import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/viewmodels/tracked_file_provider.dart';
+import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 
 final autoSaveTimerProvider = Provider<AutoSaveTimerService>((ref) {
   return AutoSaveTimerService(ref);
@@ -57,8 +58,11 @@ class AutoSaveTimerService {
   }
 
   Future<void> _triggerForceSave(TrackedFile file) async {
+    final statusNotifier = _ref.read(autoSaveStatusProvider.notifier);
+    statusNotifier.markSaving();
+
     try {
-      final gitService = GitService();
+      final gitService = _ref.read(gitServiceProvider);
       await gitService.commitChanges(
         repoPath: file.repoPath ?? '',
         fileName: file.fileName,
@@ -66,8 +70,10 @@ class AutoSaveTimerService {
       );
       
       markFileSaved(file);
+      statusNotifier.markSaved();
     } catch (e) {
       print('Force save failed: $e');
+      statusNotifier.markFailed(e.toString());
     }
   }
 

@@ -27,7 +27,7 @@ class AiService {
           'Authorization': 'Bearer ${settings.aiApiKey}',
         },
         body: jsonEncode({
-          'model': 'gpt-3.5-turbo',
+          'model': settings.aiModel,
           'messages': [
             {
               'role': 'system',
@@ -70,7 +70,7 @@ class AiService {
           'Authorization': 'Bearer ${settings.aiApiKey}',
         },
         body: jsonEncode({
-          'model': 'gpt-3.5-turbo',
+          'model': settings.aiModel,
           'messages': [
             {
               'role': 'system',
@@ -113,7 +113,7 @@ class AiService {
           'Authorization': 'Bearer ${settings.aiApiKey}',
         },
         body: jsonEncode({
-          'model': 'gpt-3.5-turbo',
+          'model': settings.aiModel,
           'messages': [
             {
               'role': 'system',

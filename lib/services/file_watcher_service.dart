@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:watcher/watcher.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/services/git_service.dart';
+import 'package:easy_versions_controller/viewmodels/git_provider.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
+import 'package:easy_versions_controller/services/auto_save_timer_service.dart';
+import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 
 final fileWatcherProvider = Provider<FileWatcherService>((ref) {
   return FileWatcherService(ref);
@@ -74,6 +76,10 @@ class FileWatcherService {
 
       _lastModified[file.id] = now;
 
+      // 标记文件已修改，通知长计时器
+      final autoSaveTimer = _ref.read(autoSaveTimerProvider);
+      autoSaveTimer.markFileChanged(file);
+
       final existingTimer = _debounceTimers[file.id];
       if (existingTimer != null) {
         existingTimer.cancel();
@@ -89,15 +95,25 @@ class FileWatcherService {
   }
 
   Future<void> _triggerAutoSave(TrackedFile file) async {
+    final statusNotifier = _ref.read(autoSaveStatusProvider.notifier);
+    statusNotifier.markSaving();
+
     try {
-      final gitService = GitService();
+      final gitService = _ref.read(gitServiceProvider);
       await gitService.commitChanges(
         repoPath: file.repoPath ?? '',
         fileName: file.fileName,
         originalFilePath: file.filePath,
       );
+
+      // 提交成功后重置状态，避免长计时器重复提交
+      final autoSaveTimer = _ref.read(autoSaveTimerProvider);
+      autoSaveTimer.markFileSaved(file);
+
+      statusNotifier.markSaved();
     } catch (e) {
       print('Auto save failed: $e');
+      statusNotifier.markFailed(e.toString());
     }
   }
 }
