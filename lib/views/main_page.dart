@@ -19,6 +19,8 @@ import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/services/notification_service.dart';
 import 'package:easy_versions_controller/utils/platform_utils.dart';
 import 'package:easy_versions_controller/services/editor_service.dart';
+import 'package:easy_versions_controller/services/xlsx_parser_service.dart';
+import 'package:pdfrx/pdfrx.dart';
 
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
@@ -1206,6 +1208,7 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
   bool _isLoading = true;
   String? _error;
   bool _isBinary = false;
+  String? _activeSheetName;
 
   static const _textExtensions = {
     'txt',
@@ -1286,6 +1289,16 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     return _imageExtensions.contains(ext);
   }
 
+  bool _isPdfFile(String filePath) {
+    final ext = filePath.split('.').last.toLowerCase();
+    return ext == 'pdf';
+  }
+
+  bool _isExcelFile(String filePath) {
+    final ext = filePath.split('.').last.toLowerCase();
+    return const {'xlsx', 'xls'}.contains(ext);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1310,7 +1323,9 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     try {
       final file = File(widget.file.filePath);
       if (await file.exists()) {
-        if (_isImageFile(widget.file.filePath)) {
+        if (_isImageFile(widget.file.filePath) ||
+            _isPdfFile(widget.file.filePath) ||
+            _isExcelFile(widget.file.filePath)) {
           setState(() {
             _isBinary = true;
             _isLoading = false;
@@ -1376,6 +1391,12 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     }
 
     if (_isBinary) {
+      if (_isPdfFile(widget.file.filePath)) {
+        return _buildPdfPreview();
+      }
+      if (_isExcelFile(widget.file.filePath)) {
+        return _buildExcelPreview();
+      }
       if (_isImageFile(widget.file.filePath)) {
         return Center(
           child: Image.file(
@@ -1401,6 +1422,124 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
         ),
       ),
     );
+  }
+
+  Widget _buildPdfPreview() {
+    return PdfViewer.file(
+      widget.file.filePath,
+      params: const PdfViewerParams(
+        pageAnchor: PdfPageAnchor.top,
+        pageAnchorEnd: PdfPageAnchor.bottom,
+      ),
+    );
+  }
+
+  Widget _buildExcelPreview() {
+    try {
+      final sheets = XlsxParserService.parse(widget.file.filePath);
+      if (sheets.isEmpty) {
+        return _buildBinaryPlaceholder();
+      }
+
+      final activeSheetName = _activeSheetName ?? sheets.first.name;
+      final currentSheet = sheets.firstWhere(
+        (s) => s.name == activeSheetName,
+        orElse: () => sheets.first,
+      );
+
+      if (currentSheet.rows.isEmpty) {
+        return _buildBinaryPlaceholder();
+      }
+
+      return Column(
+        children: [
+          if (sheets.length > 1)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: sheets.map((s) {
+                    final isActive = s.name == activeSheetName;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.sm),
+                      child: ChoiceChip(
+                        label: Text(s.name),
+                        selected: isActive,
+                        onSelected: (_) {
+                          setState(() {
+                            _activeSheetName = s.name;
+                          });
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+          Expanded(child: _buildSheetTable(currentSheet)),
+        ],
+      );
+    } catch (e) {
+      return _buildBinaryPlaceholder();
+    }
+  }
+
+  Widget _buildSheetTable(XlsxSheet sheet) {
+    final maxCols = sheet.rows.fold(
+      0,
+      (max, row) => row.length > max ? row.length : max,
+    );
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        child: DataTable(
+          columnSpacing: AppSpacing.lg,
+          dataRowMinHeight: 28,
+          dataRowMaxHeight: 36,
+          headingRowHeight: 32,
+          columns: List.generate(
+            maxCols,
+            (i) => DataColumn(
+              label: Text(
+                _columnLetter(i),
+                style: AppTextStyles.caption.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          rows: sheet.rows.map((row) {
+            return DataRow(
+              cells: List.generate(maxCols, (colIndex) {
+                return DataCell(
+                  Text(
+                    colIndex < row.length ? row[colIndex] : '',
+                    style: AppTextStyles.caption,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  String _columnLetter(int index) {
+    String letter = '';
+    int n = index;
+    do {
+      letter = String.fromCharCode('A'.codeUnitAt(0) + (n % 26)) + letter;
+      n = n ~/ 26 - 1;
+    } while (n >= 0);
+    return letter;
   }
 
   Widget _buildBinaryPlaceholder() {
