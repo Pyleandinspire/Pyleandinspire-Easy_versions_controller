@@ -7,7 +7,6 @@ import 'package:uuid/uuid.dart';
 import 'package:easy_versions_controller/services/database_service.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
-import 'package:easy_versions_controller/models/snapshot.dart';
 
 /// 端到端集成测试
 /// 验证：添加文件 → 编辑文件 → 自动保存 → 查看时间轴 → 查看差异 → 回退版本

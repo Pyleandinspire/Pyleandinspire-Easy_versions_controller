@@ -169,7 +169,6 @@ class BackupService {
       // 恢复设置
       final settingsFile = File(p.join(tempDir.path, _backupSettingsName));
       if (await settingsFile.exists()) {
-        final settingsJson = await settingsFile.readAsString();
         // 设置导入后需要重启应用生效（或手动加载）
         // 这里简单不处理，避免覆盖用户当前设置
       }

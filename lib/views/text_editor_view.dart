@@ -2,6 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_highlight/themes/monokai-sublime.dart';
+import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
@@ -9,13 +13,61 @@ import 'package:easy_versions_controller/services/ai_commit_service.dart';
 import 'package:easy_versions_controller/utils/platform_utils.dart';
 
 final editorProvider = Provider<TextEditorService>((ref) {
-  return TextEditorService(ref);
+  return TextEditorService();
 });
 
-class TextEditorService {
-  final Ref _ref;
+/// Markdown 视图模式
+enum MarkdownViewMode { edit, preview, split }
 
-  TextEditorService(this._ref);
+/// 文件扩展名 → highlight.js 语言 ID 映射
+final Map<String, String> _languageMap = {
+  'dart': 'dart',
+  'py': 'python',
+  'js': 'javascript',
+  'ts': 'typescript',
+  'jsx': 'javascript',
+  'tsx': 'typescript',
+  'json': 'json',
+  'xml': 'xml',
+  'html': 'html',
+  'css': 'css',
+  'scss': 'scss',
+  'less': 'less',
+  'md': 'markdown',
+  'markdown': 'markdown',
+  'yaml': 'yaml',
+  'yml': 'yaml',
+  'sql': 'sql',
+  'sh': 'bash',
+  'bat': 'dos',
+  'ps1': 'powershell',
+  'java': 'java',
+  'kt': 'kotlin',
+  'swift': 'swift',
+  'c': 'c',
+  'cpp': 'cpp',
+  'h': 'c',
+  'hpp': 'cpp',
+  'rs': 'rust',
+  'go': 'go',
+  'rb': 'ruby',
+  'php': 'php',
+  'ini': 'ini',
+  'toml': 'toml',
+  'gradle': 'groovy',
+  'cmake': 'cmake',
+  'makefile': 'makefile',
+  'dockerfile': 'dockerfile',
+};
+
+/// 根据文件名获取 highlight.js 语言 ID
+String? _getLanguageId(String fileName) {
+  final ext = fileName.split('.').last.toLowerCase();
+  return _languageMap[ext];
+}
+
+class TextEditorService {
+  TextEditorService();
 
   Future<String> readFile(String filePath) async {
     final file = File(filePath);
@@ -56,6 +108,16 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   final TextEditingController _findController = TextEditingController();
   final TextEditingController _replaceController = TextEditingController();
   final FocusNode _findFocusNode = FocusNode();
+
+  // 语法高亮预览
+  bool _highlightEnabled = false;
+  // Markdown 视图模式（仅 .md 文件）
+  MarkdownViewMode _mdMode = MarkdownViewMode.edit;
+
+  bool get _isMarkdownFile {
+    final ext = widget.file.fileName.split('.').last.toLowerCase();
+    return ext == 'md' || ext == 'markdown';
+  }
 
   @override
   void initState() {
@@ -130,7 +192,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   }
 
   int get _wordCount {
-    return _textController.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    return _textController.text
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .length;
   }
 
   int get _lineCount {
@@ -172,7 +237,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
     if (query.isEmpty) return;
     final selection = _textController.selection;
     if (!selection.isValid) return;
-    final selected = _textController.text.substring(selection.start, selection.end);
+    final selected = _textController.text.substring(
+      selection.start,
+      selection.end,
+    );
     if (selected == query) {
       _textController.value = _textController.value.replaced(
         TextRange(start: selection.start, end: selection.end),
@@ -202,7 +270,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
 
   Widget _buildFindReplaceBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: 4,
+      ),
       decoration: const BoxDecoration(
         color: AppColors.secondary,
         border: Border(top: BorderSide(color: AppColors.accent)),
@@ -218,7 +289,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
               decoration: const InputDecoration(
                 isDense: true,
                 hintText: '查找...',
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 6,
+                ),
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => setState(() {}),
@@ -233,7 +307,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
               decoration: const InputDecoration(
                 isDense: true,
                 hintText: '替换...',
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 6,
+                ),
                 border: OutlineInputBorder(),
               ),
             ),
@@ -252,7 +329,7 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
           IconButton(
-            icon: const Icon(Icons.done_all, size: 18), 
+            icon: const Icon(Icons.done_all, size: 18),
             onPressed: _replaceAll,
             tooltip: '全部替换',
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -351,8 +428,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   Widget build(BuildContext context) {
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _saveFile,
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true): _toggleFindReplace,
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true):
+            _saveFile,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _toggleFindReplace,
       },
       child: Focus(
         focusNode: _focusNode,
@@ -382,7 +461,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       ),
       child: Row(
         children: [
-          Text('行 $_cursorLine, 列 $_cursorColumn', style: AppTextStyles.caption),
+          Text(
+            '行 $_cursorLine, 列 $_cursorColumn',
+            style: AppTextStyles.caption,
+          ),
           const VerticalDivider(width: 20),
           Text('字数 $_wordCount', style: AppTextStyles.caption),
           const VerticalDivider(width: 20),
@@ -396,11 +478,17 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
               color: AppColors.accent.withOpacity(0.2),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text(_fileType, style: AppTextStyles.caption.copyWith(color: AppColors.accent)),
+            child: Text(
+              _fileType,
+              style: AppTextStyles.caption.copyWith(color: AppColors.accent),
+            ),
           ),
           if (_hasChanges) ...[
             const SizedBox(width: AppSpacing.md),
-            Text('未保存', style: AppTextStyles.caption.copyWith(color: AppColors.warning)),
+            Text(
+              '未保存',
+              style: AppTextStyles.caption.copyWith(color: AppColors.warning),
+            ),
           ],
         ],
       ),
@@ -436,6 +524,25 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
         onPressed: () => Navigator.pop(context),
       ),
       actions: [
+        // 语法高亮预览切换（仅支持的语言显示）
+        if (_getLanguageId(widget.file.fileName) != null)
+          IconButton(
+            icon: Icon(
+              _highlightEnabled ? Icons.code_off : Icons.code,
+              size: 20,
+              color: _highlightEnabled ? AppColors.accent : null,
+            ),
+            tooltip: _highlightEnabled ? '关闭语法高亮' : '语法高亮',
+            onPressed: () => setState(() {
+              _highlightEnabled = !_highlightEnabled;
+              if (_highlightEnabled) _mdMode = MarkdownViewMode.edit;
+            }),
+          ),
+        // Markdown 视图切换（仅 .md 文件显示）
+        if (_isMarkdownFile) ...[
+          const SizedBox(width: AppSpacing.xs),
+          _buildMarkdownModeToggle(),
+        ],
         IconButton(
           icon: const Icon(Icons.open_in_new, size: 20),
           tooltip: '用系统默认程序打开',
@@ -459,6 +566,22 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   }
 
   Widget _buildEditor() {
+    // 语法高亮预览模式
+    if (_highlightEnabled && _getLanguageId(widget.file.fileName) != null) {
+      return _buildHighlightedPreview();
+    }
+
+    // Markdown 预览模式
+    if (_isMarkdownFile && _mdMode == MarkdownViewMode.preview) {
+      return _buildMarkdownPreview();
+    }
+
+    // Markdown 分屏模式
+    if (_isMarkdownFile && _mdMode == MarkdownViewMode.split) {
+      return _buildMarkdownSplit();
+    }
+
+    // 普通编辑模式
     return Container(
       color: AppColors.primary,
       child: Row(
@@ -468,6 +591,117 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
           Expanded(child: _buildTextArea()),
         ],
       ),
+    );
+  }
+
+  Widget _buildHighlightedPreview() {
+    final languageId = _getLanguageId(widget.file.fileName)!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      color: isDark ? const Color(0xFF272822) : Colors.white,
+      child: SingleChildScrollView(
+        child: HighlightView(
+          _textController.text,
+          language: languageId,
+          theme: isDark ? monokaiSublimeTheme : githubTheme,
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          textStyle: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 14,
+            height: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarkdownPreview() {
+    return Container(
+      color: AppColors.primary,
+      child: Markdown(
+        data: _textController.text,
+        selectable: true,
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        styleSheet: MarkdownStyleSheet(
+          h1: AppTextStyles.heading1,
+          h2: AppTextStyles.heading2,
+          p: AppTextStyles.body,
+          code: AppTextStyles.caption.copyWith(
+            fontFamily: 'monospace',
+            backgroundColor: AppColors.secondary,
+          ),
+          codeblockDecoration: BoxDecoration(
+            color: AppColors.secondary,
+            borderRadius: BorderRadius.circular(AppRadius.button),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarkdownSplit() {
+    return Container(
+      color: AppColors.primary,
+      child: Row(
+        children: [
+          // 左侧编辑区
+          Expanded(
+            child: Row(
+              children: [
+                _buildLineNumbers(),
+                const VerticalDivider(width: 1, color: AppColors.border),
+                Expanded(child: _buildTextArea()),
+              ],
+            ),
+          ),
+          const VerticalDivider(width: 2, color: AppColors.accent),
+          // 右侧预览区
+          Expanded(
+            child: Markdown(
+              data: _textController.text,
+              selectable: true,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              styleSheet: MarkdownStyleSheet(
+                h1: AppTextStyles.heading1,
+                h2: AppTextStyles.heading2,
+                p: AppTextStyles.body,
+                code: AppTextStyles.caption.copyWith(
+                  fontFamily: 'monospace',
+                  backgroundColor: AppColors.secondary,
+                ),
+                codeblockDecoration: BoxDecoration(
+                  color: AppColors.secondary,
+                  borderRadius: BorderRadius.circular(AppRadius.button),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMarkdownModeToggle() {
+    return ToggleButtons(
+      isSelected: [
+        _mdMode == MarkdownViewMode.edit,
+        _mdMode == MarkdownViewMode.preview,
+        _mdMode == MarkdownViewMode.split,
+      ],
+      onPressed: (index) => setState(() {
+        _mdMode = MarkdownViewMode.values[index];
+        if (index != 0) _highlightEnabled = false;
+      }),
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 28),
+      selectedColor: Colors.white,
+      fillColor: AppColors.accent,
+      borderRadius: BorderRadius.circular(4),
+      children: const [
+        Tooltip(message: '编辑', child: Icon(Icons.edit, size: 16)),
+        Tooltip(message: '预览', child: Icon(Icons.visibility, size: 16)),
+        Tooltip(message: '分屏', child: Icon(Icons.chrome_reader_mode, size: 16)),
+      ],
     );
   }
 

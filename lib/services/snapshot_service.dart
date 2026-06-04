@@ -27,7 +27,7 @@ class SnapshotService {
 
   Future<String> getSnapshotsRootPath() async {
     if (_overrideRootPath != null) {
-      return p.join(_overrideRootPath!, _snapshotsRoot);
+      return p.join(_overrideRootPath, _snapshotsRoot);
     }
     final appDir = await getApplicationSupportDirectory();
     return p.join(appDir.path, _snapshotsRoot);

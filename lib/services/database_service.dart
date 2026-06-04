@@ -93,17 +93,23 @@ class DatabaseService {
 
       // 尝试重命名旧列（如果存在）
       try {
-        await db.execute('ALTER TABLE $_tableTrackedFiles RENAME COLUMN repoPath TO snapshotDir');
+        await db.execute(
+          'ALTER TABLE $_tableTrackedFiles RENAME COLUMN repoPath TO snapshotDir',
+        );
       } catch (_) {
         // 旧列不存在或已重命名，忽略
       }
       try {
-        await db.execute('ALTER TABLE $_tableTrackedFiles RENAME COLUMN addedAt TO createdAt');
+        await db.execute(
+          'ALTER TABLE $_tableTrackedFiles RENAME COLUMN addedAt TO createdAt',
+        );
       } catch (_) {
         // 忽略
       }
       try {
-        await db.execute('ALTER TABLE $_tableTrackedFiles RENAME COLUMN lastAccessedAt TO updatedAt');
+        await db.execute(
+          'ALTER TABLE $_tableTrackedFiles RENAME COLUMN lastAccessedAt TO updatedAt',
+        );
       } catch (_) {
         // 忽略
       }
@@ -120,10 +126,7 @@ class DatabaseService {
 
   Future<List<TrackedFile>> getAllTrackedFiles() async {
     final db = await database;
-    final maps = await db.query(
-      _tableTrackedFiles,
-      orderBy: 'createdAt DESC',
-    );
+    final maps = await db.query(_tableTrackedFiles, orderBy: 'createdAt DESC');
     return maps.map((map) => TrackedFile.fromMap(map)).toList();
   }
 
@@ -216,11 +219,7 @@ class DatabaseService {
 
   Future<int> deleteSnapshot(String id) async {
     final db = await database;
-    return await db.delete(
-      _tableSnapshots,
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return await db.delete(_tableSnapshots, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<int> deleteSnapshotsByFileId(String fileId) async {

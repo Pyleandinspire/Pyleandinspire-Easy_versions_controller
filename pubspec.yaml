@@ -2,7 +2,7 @@ name: easy_versions_controller
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
@@ -37,6 +37,7 @@ dependencies:
   watcher: ^1.2.1
   sqflite: ^2.4.2
   sqflite_common_ffi: ^2.3.5
+  sqlite3: ^2.7.6
   shared_preferences: ^2.5.3
   file_picker: ^9.2.3
   path_provider: ^2.1.5
@@ -47,6 +48,10 @@ dependencies:
   path: ^1.9.1
   http: ^1.2.2
   archive: ^4.0.9
+  flutter_highlight: ^0.7.0
+  highlight: ^0.7.0
+  flutter_markdown: ^0.7.6
+  markdown: ^7.2.2
 
 dev_dependencies:
   flutter_test:
@@ -64,7 +69,6 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

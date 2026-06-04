@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
@@ -12,13 +13,12 @@ import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/views/help_dialog.dart';
 import 'package:easy_versions_controller/views/compare_view.dart';
 import 'package:easy_versions_controller/views/ai_agent_view.dart';
-import 'package:easy_versions_controller/views/text_editor_view.dart';
-import 'package:easy_versions_controller/views/snapshot_preview_view.dart';
 import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 import 'package:easy_versions_controller/viewmodels/snapshot_timeline_provider.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/services/notification_service.dart';
 import 'package:easy_versions_controller/utils/platform_utils.dart';
+import 'package:easy_versions_controller/services/editor_service.dart';
 
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
@@ -29,20 +29,197 @@ class MainPage extends ConsumerStatefulWidget {
 
 class _MainPageState extends ConsumerState<MainPage> {
   TrackedFile? _selectedFile;
+  Snapshot? _previewingSnapshot;
+  bool _isEditing = false;
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _editorController = TextEditingController();
+  final ScrollController _editorScrollController = ScrollController();
+  final ScrollController _lineNumberScrollController = ScrollController();
   String _searchQuery = '';
+  bool _hasChanges = false;
+  bool _isSaving = false;
+  List<String> _history = [];
+  int _historyIndex = -1;
+  int _currentLine = 1;
+  int _currentColumn = 1;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _editorController.dispose();
+    _editorScrollController.dispose();
+    _lineNumberScrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _editorScrollController.addListener(_syncScroll);
+    _editorController.addListener(_onTextChanged);
+  }
+
+  void _syncScroll() {
+    _lineNumberScrollController.jumpTo(_editorScrollController.offset);
+  }
+
+  void _onTextChanged() {
+    setState(() {
+      _hasChanges = true;
+      _updateCursorPosition();
+    });
+  }
+
+  void _updateCursorPosition() {
+    final text = _editorController.text;
+    final selection = _editorController.selection;
+    if (selection.start != -1) {
+      final beforeCursor = text.substring(0, selection.start);
+      final lines = beforeCursor.split('\n');
+      _currentLine = lines.length;
+      _currentColumn = lines.isNotEmpty ? lines.last.length + 1 : 1;
+    }
+  }
+
+  void _saveToHistory() {
+    _history = _history.sublist(0, _historyIndex + 1);
+    _history.add(_editorController.text);
+    _historyIndex = _history.length - 1;
+    if (_history.length > 50) {
+      _history.removeAt(0);
+      _historyIndex--;
+    }
+  }
+
+  void _undo() {
+    if (_historyIndex > 0) {
+      _historyIndex--;
+      _editorController.text = _history[_historyIndex];
+      setState(() => _hasChanges = _historyIndex != _history.length - 1);
+    }
+  }
+
+  void _redo() {
+    if (_historyIndex < _history.length - 1) {
+      _historyIndex++;
+      _editorController.text = _history[_historyIndex];
+      setState(() => _hasChanges = _historyIndex != _history.length - 1);
+    }
+  }
+
+  Future<void> _loadFileContent(TrackedFile file) async {
+    try {
+      final content = await File(file.filePath).readAsString();
+      _editorController.text = content;
+      _history = [content];
+      _historyIndex = 0;
+      setState(() => _hasChanges = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('读取文件失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _saveFile() async {
+    if (!_hasChanges || _selectedFile == null) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      final editorService = ref.read(editorProvider);
+      await editorService.writeFile(
+        _selectedFile!.filePath,
+        _editorController.text,
+      );
+
+      final snapshotService = ref.read(snapshotServiceProvider);
+      await snapshotService.createAutoSnapshot(
+        fileId: _selectedFile!.id,
+        filePath: _selectedFile!.filePath,
+        fileName: _selectedFile!.fileName,
+        message: '手动保存',
+      );
+
+      _saveToHistory();
+      setState(() => _hasChanges = false);
+
+      // 刷新缓存并重新加载时间轴
+      await ref.read(refreshSnapshotCacheProvider)(_selectedFile!.id);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('保存成功，已创建新版本快照'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+      }
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+
+  void _toggleEditMode() {
+    if (_selectedFile == null) return;
+
+    if (!_isEditing) {
+      _loadFileContent(_selectedFile!);
+    }
+    setState(() {
+      _isEditing = !_isEditing;
+      if (!_isEditing && _hasChanges) {
+        _showSaveConfirmDialog();
+      }
+    });
+  }
+
+  void _exitSnapshotPreview() {
+    setState(() => _previewingSnapshot = null);
+  }
+
+  Future<void> _showSaveConfirmDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('保存更改'),
+        content: const Text('文件已修改，是否保存更改？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: const Text('不保存'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('save'),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == 'save') {
+      await _saveFile();
+    } else if (result == 'discard') {
+      setState(() => _hasChanges = false);
+    }
+  }
+
+  void _previewSnapshot(Snapshot snapshot) {
+    setState(() => _previewingSnapshot = snapshot);
   }
 
   @override
   Widget build(BuildContext context) {
     final filesAsync = ref.watch(trackedFileListProvider);
 
-    // 监听自动保存状态变化，保存失败时弹出通知
     ref.listen<AutoSaveState>(autoSaveStatusProvider, (prev, next) {
       if (next.status == AutoSaveStatus.failed &&
           prev?.status != AutoSaveStatus.failed) {
@@ -60,20 +237,36 @@ class _MainPageState extends ConsumerState<MainPage> {
     });
 
     return Scaffold(
-      body: Column(
-        children: [
-          _buildTopBar(),
-          Expanded(
-            child: Row(
-              children: [
-                _buildLeftPanel(filesAsync),
-                _buildCenterPanel(),
-                _buildRightPanel(),
-              ],
-            ),
+      body: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): () =>
+              _saveFile(),
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () =>
+              _undo(),
+          const SingleActivator(
+            LogicalKeyboardKey.keyZ,
+            control: true,
+            shift: true,
+          ): () =>
+              _redo(),
+        },
+        child: FocusScope(
+          child: Column(
+            children: [
+              _buildTopBar(),
+              Expanded(
+                child: Row(
+                  children: [
+                    _buildLeftPanel(filesAsync),
+                    _buildCenterPanel(),
+                    _buildRightPanel(),
+                  ],
+                ),
+              ),
+              _buildStatusBar(),
+            ],
           ),
-          _buildStatusBar(),
-        ],
+        ),
       ),
     );
   }
@@ -281,6 +474,9 @@ class _MainPageState extends ConsumerState<MainPage> {
           .updateLastAccessed(file.id);
       setState(() {
         _selectedFile = file;
+        _isEditing = false;
+        _previewingSnapshot = null;
+        _hasChanges = false;
       });
     }
   }
@@ -311,6 +507,8 @@ class _MainPageState extends ConsumerState<MainPage> {
 
     if (result == 'remove_only') {
       ref.read(trackedFileListProvider.notifier).removeFile(file.id);
+      // 清除该文件的缓存
+      ref.read(clearSnapshotCacheProvider)(file.id);
       if (_selectedFile?.id == file.id) {
         setState(() => _selectedFile = null);
       }
@@ -318,6 +516,8 @@ class _MainPageState extends ConsumerState<MainPage> {
       ref
           .read(trackedFileListProvider.notifier)
           .removeFile(file.id, deleteSnapshots: true);
+      // 清除该文件的缓存
+      ref.read(clearSnapshotCacheProvider)(file.id);
       if (_selectedFile?.id == file.id) {
         setState(() => _selectedFile = null);
       }
@@ -397,6 +597,10 @@ class _MainPageState extends ConsumerState<MainPage> {
         color: Colors.white,
         child: _selectedFile == null
             ? _buildNoSelectionPreview()
+            : _previewingSnapshot != null
+            ? _buildSnapshotPreview()
+            : _isEditing
+            ? _buildEditorView()
             : _buildFilePreview(),
       ),
     );
@@ -433,18 +637,27 @@ class _MainPageState extends ConsumerState<MainPage> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const Spacer(),
-              IconButton(
+              const SizedBox(width: AppSpacing.md),
+              ElevatedButton.icon(
+                onPressed: _toggleEditMode,
                 icon: const Icon(Icons.edit_note, size: 18),
-                tooltip: '编辑',
-                onPressed: _selectedFile != null
-                    ? () => _showEditorView()
-                    : null,
-                disabledColor: AppColors.textSecondary,
+                label: const Text('编辑'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.button),
+                  ),
+                ),
               ),
+              const SizedBox(width: AppSpacing.sm),
               IconButton(
-                icon: const Icon(Icons.compare_arrows, size: 18),
-                tooltip: '对比',
+                icon: const Icon(Icons.compare_arrows, size: 20),
+                tooltip: '版本对比',
                 onPressed: _selectedFile != null
                     ? () => _showCompareView()
                     : null,
@@ -463,9 +676,198 @@ class _MainPageState extends ConsumerState<MainPage> {
     );
   }
 
+  Widget _buildSnapshotPreview() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, size: 20),
+                tooltip: '返回当前版本',
+                onPressed: _exitSnapshotPreview,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              const Icon(Icons.history, size: 20, color: AppColors.accent),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_selectedFile?.fileName} - 历史版本',
+                      style: AppTextStyles.heading3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (_previewingSnapshot != null)
+                      Text(
+                        '${DateFormat('yyyy-MM-dd HH:mm:ss').format(_previewingSnapshot!.timestamp)} - ${_previewingSnapshot!.message ?? ''}',
+                        style: AppTextStyles.caption,
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.compare_arrows, size: 20),
+                tooltip: '与当前版本对比',
+                onPressed: _selectedFile != null && _previewingSnapshot != null
+                    ? () => _showCompareView(snapshot: _previewingSnapshot)
+                    : null,
+                disabledColor: AppColors.textSecondary,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: AppColors.border),
+        Expanded(
+          child: _previewingSnapshot != null
+              ? _SnapshotPreviewContent(snapshot: _previewingSnapshot!)
+              : const SizedBox(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditorView() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, size: 20),
+                tooltip: '返回预览',
+                onPressed: _toggleEditMode,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              const Icon(Icons.edit_note, size: 20, color: AppColors.accent),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _selectedFile?.fileName ?? '',
+                        style: AppTextStyles.heading3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (_hasChanges)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.circle, size: 10, color: Colors.red),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              IconButton(
+                icon: const Icon(Icons.open_in_new, size: 18),
+                tooltip: '用系统程序打开',
+                onPressed: _selectedFile != null
+                    ? () => openFileWithDefaultApp(_selectedFile!.filePath)
+                    : null,
+              ),
+              IconButton(
+                icon: const Icon(Icons.undo, size: 18),
+                tooltip: '撤销',
+                onPressed: _historyIndex > 0 ? _undo : null,
+                disabledColor: AppColors.textSecondary,
+              ),
+              IconButton(
+                icon: const Icon(Icons.redo, size: 18),
+                tooltip: '重做',
+                onPressed: _historyIndex < _history.length - 1 ? _redo : null,
+                disabledColor: AppColors.textSecondary,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              ElevatedButton.icon(
+                onPressed: _isSaving ? null : _saveFile,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.save, size: 18),
+                label: const Text('保存'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.button),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: AppColors.border),
+        Expanded(
+          child: Container(
+            color: AppColors.primary,
+            child: Row(
+              children: [
+                _buildLineNumbers(),
+                const VerticalDivider(width: 1, color: AppColors.border),
+                Expanded(child: _buildTextArea()),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLineNumbers() {
+    final lines = _editorController.text.split('\n');
+    return Container(
+      width: 50,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      color: AppColors.secondary,
+      child: ListView.builder(
+        controller: _lineNumberScrollController,
+        itemCount: lines.length,
+        itemBuilder: (context, index) {
+          return Text(
+            '${index + 1}',
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+            textAlign: TextAlign.right,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTextArea() {
+    return TextField(
+      controller: _editorController,
+      scrollController: _editorScrollController,
+      keyboardType: TextInputType.multiline,
+      maxLines: null,
+      style: AppTextStyles.body.copyWith(fontFamily: 'Monaco', fontSize: 13),
+      decoration: const InputDecoration(
+        border: InputBorder.none,
+        contentPadding: EdgeInsets.all(12),
+      ),
+      autofocus: true,
+    );
+  }
+
   Widget _buildRightPanel() {
     return Container(
-      width: 250,
+      width: 280,
       decoration: const BoxDecoration(
         color: AppColors.primary,
         border: Border(left: BorderSide(color: AppColors.border, width: 1)),
@@ -522,23 +924,41 @@ class _MainPageState extends ConsumerState<MainPage> {
             final snapshot = snapshots[index];
             final isLatest = index == 0;
 
-            return ListTile(
-              leading: Icon(
-                isLatest ? Icons.fiber_manual_record : Icons.circle_outlined,
-                size: 16,
-                color: AppColors.accent,
+            return Container(
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: AppColors.border, width: 0.5),
+                ),
               ),
-              title: Text(
-                snapshot.message ?? '',
-                style: AppTextStyles.body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              child: ListTile(
+                leading: Icon(
+                  isLatest ? Icons.fiber_manual_record : Icons.circle_outlined,
+                  size: 16,
+                  color: AppColors.accent,
+                ),
+                title: Text(
+                  snapshot.message ?? '',
+                  style: AppTextStyles.body,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  DateFormat('yyyy-MM-dd HH:mm:ss').format(snapshot.timestamp),
+                  style: AppTextStyles.timestamp,
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_red_eye, size: 16),
+                      tooltip: '预览此版本',
+                      onPressed: () => _previewSnapshot(snapshot),
+                      color: AppColors.accent,
+                    ),
+                  ],
+                ),
+                onTap: () => _showSnapshotActions(file, snapshot),
               ),
-              subtitle: Text(
-                DateFormat('yyyy-MM-dd HH:mm:ss').format(snapshot.timestamp),
-                style: AppTextStyles.timestamp,
-              ),
-              onTap: () => _showSnapshotActions(file, snapshot),
             );
           },
         );
@@ -564,15 +984,7 @@ class _MainPageState extends ConsumerState<MainPage> {
               ),
               onTap: () {
                 Navigator.of(ctx).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SnapshotPreviewView(
-                      snapshot: snapshot,
-                      fileName: file.fileName,
-                    ),
-                  ),
-                );
+                _previewSnapshot(snapshot);
               },
             ),
             ListTile(
@@ -631,8 +1043,11 @@ class _MainPageState extends ConsumerState<MainPage> {
           fileName: file.fileName,
           snapshot: snapshot,
         );
-        // 刷新时间轴
-        ref.invalidate(snapshotTimelineProvider(file.id));
+        // 刷新缓存并重新加载时间轴
+        await ref.read(refreshSnapshotCacheProvider)(file.id);
+        if (_isEditing) {
+          await _loadFileContent(file);
+        }
         if (mounted) {
           ScaffoldMessenger.of(
             context,
@@ -691,7 +1106,24 @@ class _MainPageState extends ConsumerState<MainPage> {
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         child: Row(
           children: [
-            Text('就绪', style: AppTextStyles.caption),
+            if (_isEditing) ...[
+              Text(
+                '行 $_currentLine, 列 $_currentColumn',
+                style: AppTextStyles.caption,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Text(
+                '字数 ${_editorController.text.length}',
+                style: AppTextStyles.caption,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Text(
+                '行数 ${_editorController.text.split('\n').length}',
+                style: AppTextStyles.caption,
+              ),
+            ] else ...[
+              Text('就绪', style: AppTextStyles.caption),
+            ],
             const Spacer(),
             Tooltip(
               message: tooltip,
@@ -704,6 +1136,12 @@ class _MainPageState extends ConsumerState<MainPage> {
                 ],
               ),
             ),
+            if (_hasChanges) ...[
+              const SizedBox(width: AppSpacing.md),
+              const Icon(Icons.circle, size: 10, color: Colors.red),
+              const SizedBox(width: AppSpacing.xs),
+              Text('未保存', style: AppTextStyles.caption),
+            ],
           ],
         ),
       ),
@@ -737,17 +1175,6 @@ class _MainPageState extends ConsumerState<MainPage> {
     );
   }
 
-  void _showEditorView() {
-    if (_selectedFile != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => TextEditorView(file: _selectedFile!),
-        ),
-      );
-    }
-  }
-
   Widget _buildNoSelectionTimeline() {
     return Center(
       child: Column(
@@ -777,7 +1204,6 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
   String? _error;
   bool _isBinary = false;
 
-  // 常见文本文件扩展名
   static const _textExtensions = {
     'txt',
     'md',
@@ -835,7 +1261,6 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     'dockerfile',
   };
 
-  // 图片文件扩展名
   static const _imageExtensions = {
     'jpg',
     'jpeg',
@@ -849,7 +1274,6 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
 
   bool _isTextFile(String filePath) {
     final ext = filePath.split('.').last.toLowerCase();
-    // 无扩展名的文件视为文本
     if (!filePath.contains('.')) return true;
     return _textExtensions.contains(ext);
   }
@@ -884,16 +1308,6 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
       final file = File(widget.file.filePath);
       if (await file.exists()) {
         if (_isImageFile(widget.file.filePath)) {
-          // 图片文件用 Image 组件显示
-          setState(() {
-            _isBinary = true; // 标记为特殊类型，但不是错误
-            _isLoading = false;
-          });
-          return;
-        }
-
-        if (!_isTextFile(widget.file.filePath)) {
-          // 非文本文件，不尝试读取内容
           setState(() {
             _isBinary = true;
             _isLoading = false;
@@ -901,9 +1315,15 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
           return;
         }
 
-        // 文本文件，尝试读取
+        if (!_isTextFile(widget.file.filePath)) {
+          setState(() {
+            _isBinary = true;
+            _isLoading = false;
+          });
+          return;
+        }
+
         final bytes = await file.readAsBytes();
-        // 检测是否包含空字节（二进制文件标志）
         bool hasNullBytes = false;
         for (int i = 0; i < bytes.length && i < 8192; i++) {
           if (bytes[i] == 0) {
@@ -1003,6 +1423,79 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SnapshotPreviewContent extends StatefulWidget {
+  final Snapshot snapshot;
+
+  const _SnapshotPreviewContent({required this.snapshot});
+
+  @override
+  State<_SnapshotPreviewContent> createState() =>
+      _SnapshotPreviewContentState();
+}
+
+class _SnapshotPreviewContentState extends State<_SnapshotPreviewContent> {
+  String _content = '';
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSnapshotContent();
+  }
+
+  Future<void> _loadSnapshotContent() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final file = File(widget.snapshot.snapshotPath);
+      if (await file.exists()) {
+        _content = await file.readAsString();
+      } else {
+        _error = '快照文件不存在';
+      }
+    } catch (e) {
+      _error = '读取快照失败: $e';
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+            const SizedBox(height: AppSpacing.md),
+            Text(_error!, style: AppTextStyles.bodySecondary),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: SingleChildScrollView(
+        child: Text(
+          _content,
+          style: AppTextStyles.body.copyWith(
+            fontFamily: 'Monaco',
+            fontSize: 13,
+          ),
+          textAlign: TextAlign.left,
+        ),
       ),
     );
   }
