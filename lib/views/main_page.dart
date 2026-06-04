@@ -722,7 +722,10 @@ class _MainPageState extends ConsumerState<MainPage> {
         const Divider(height: 1, color: AppColors.border),
         Expanded(
           child: _previewingSnapshot != null
-              ? _SnapshotPreviewContent(snapshot: _previewingSnapshot!)
+              ? _SnapshotPreviewContent(
+                  key: ValueKey(_previewingSnapshot!.id),
+                  snapshot: _previewingSnapshot!,
+                )
               : const SizedBox(),
         ),
       ],
@@ -1428,75 +1431,62 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
   }
 }
 
-class _SnapshotPreviewContent extends StatefulWidget {
-  final Snapshot snapshot;
-
-  const _SnapshotPreviewContent({required this.snapshot});
-
-  @override
-  State<_SnapshotPreviewContent> createState() =>
-      _SnapshotPreviewContentState();
+Future<String> _loadSnapshotContent(Snapshot snapshot) async {
+  final file = File(snapshot.snapshotPath);
+  if (!await file.exists()) {
+    throw Exception('快照文件不存在');
+  }
+  return file.readAsString();
 }
 
-class _SnapshotPreviewContentState extends State<_SnapshotPreviewContent> {
-  String _content = '';
-  bool _isLoading = true;
-  String? _error;
+class _SnapshotPreviewContent extends StatelessWidget {
+  final Snapshot snapshot;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadSnapshotContent();
-  }
-
-  Future<void> _loadSnapshotContent() async {
-    setState(() => _isLoading = true);
-
-    try {
-      final file = File(widget.snapshot.snapshotPath);
-      if (await file.exists()) {
-        _content = await file.readAsString();
-      } else {
-        _error = '快照文件不存在';
-      }
-    } catch (e) {
-      _error = '读取快照失败: $e';
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
+  const _SnapshotPreviewContent({super.key, required this.snapshot});
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return FutureBuilder<String>(
+      future: _loadSnapshotContent(snapshot),
+      builder: (context, asyncSnapshot) {
+        if (asyncSnapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
-            const SizedBox(height: AppSpacing.md),
-            Text(_error!, style: AppTextStyles.bodySecondary),
-          ],
-        ),
-      );
-    }
+        if (asyncSnapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  size: 48,
+                  color: AppColors.error,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  '读取快照失败: ${asyncSnapshot.error}',
+                  style: AppTextStyles.bodySecondary,
+                ),
+              ],
+            ),
+          );
+        }
 
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      child: SingleChildScrollView(
-        child: Text(
-          _content,
-          style: AppTextStyles.body.copyWith(
-            fontFamily: 'Monaco',
-            fontSize: 13,
+        return Container(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: SingleChildScrollView(
+            child: Text(
+              asyncSnapshot.data!,
+              style: AppTextStyles.body.copyWith(
+                fontFamily: 'Monaco',
+                fontSize: 13,
+              ),
+              textAlign: TextAlign.left,
+            ),
           ),
-          textAlign: TextAlign.left,
-        ),
-      ),
+        );
+      },
     );
   }
 }
