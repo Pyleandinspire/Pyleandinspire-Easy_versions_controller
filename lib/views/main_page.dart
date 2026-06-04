@@ -21,6 +21,7 @@ import 'package:easy_versions_controller/utils/platform_utils.dart';
 import 'package:easy_versions_controller/services/editor_service.dart';
 import 'package:easy_versions_controller/services/xlsx_parser_service.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:docx_file_viewer/docx_file_viewer.dart';
 
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
@@ -1299,6 +1300,11 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
     return const {'xlsx', 'xls'}.contains(ext);
   }
 
+  bool _isDocxFile(String filePath) {
+    final ext = filePath.split('.').last.toLowerCase();
+    return ext == 'docx';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1325,7 +1331,8 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
       if (await file.exists()) {
         if (_isImageFile(widget.file.filePath) ||
             _isPdfFile(widget.file.filePath) ||
-            _isExcelFile(widget.file.filePath)) {
+            _isExcelFile(widget.file.filePath) ||
+            _isDocxFile(widget.file.filePath)) {
           setState(() {
             _isBinary = true;
             _isLoading = false;
@@ -1396,6 +1403,9 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
       }
       if (_isExcelFile(widget.file.filePath)) {
         return _buildExcelPreview();
+      }
+      if (_isDocxFile(widget.file.filePath)) {
+        return _buildDocxPreview();
       }
       if (_isImageFile(widget.file.filePath)) {
         return Center(
@@ -1540,6 +1550,60 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
       n = n ~/ 26 - 1;
     } while (n >= 0);
     return letter;
+  }
+
+  Widget _buildDocxPreview() {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.description,
+                size: 16,
+                color: AppColors.textSecondary,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(widget.file.fileName, style: AppTextStyles.caption),
+              const Spacer(),
+              ElevatedButton.icon(
+                onPressed: () => openFileWithDefaultApp(widget.file.filePath),
+                icon: const Icon(Icons.open_in_new, size: 14),
+                label: const Text('用默认程序打开'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: 4,
+                  ),
+                  minimumSize: Size.zero,
+                  textStyle: AppTextStyles.caption.copyWith(fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: DocxView.path(
+            widget.file.filePath,
+            config: const DocxViewConfig(
+              enableSearch: true,
+              enableZoom: true,
+              enableSelection: true,
+              pageMode: DocxPageMode.continuous,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildBinaryPlaceholder() {
