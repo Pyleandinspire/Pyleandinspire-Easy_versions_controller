@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -1591,17 +1592,7 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
             ],
           ),
         ),
-        Expanded(
-          child: DocxView.path(
-            widget.file.filePath,
-            config: const DocxViewConfig(
-              enableSearch: true,
-              enableZoom: true,
-              enableSelection: true,
-              pageMode: DocxPageMode.continuous,
-            ),
-          ),
-        ),
+        Expanded(child: _DocxScrollablePreview(filePath: widget.file.filePath)),
       ],
     );
   }
@@ -1686,6 +1677,79 @@ class _SnapshotPreviewContent extends StatelessWidget {
                 fontSize: 13,
               ),
               textAlign: TextAlign.left,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// DOCX 预览组件：滚轮上下滚动，Ctrl+滚轮缩放
+class _DocxScrollablePreview extends StatefulWidget {
+  final String filePath;
+  const _DocxScrollablePreview({required this.filePath});
+
+  @override
+  State<_DocxScrollablePreview> createState() => _DocxScrollablePreviewState();
+}
+
+class _DocxScrollablePreviewState extends State<_DocxScrollablePreview> {
+  final TransformationController _transformController =
+      TransformationController();
+  double _currentScale = 1.0;
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      final keys = HardwareKeyboard.instance.logicalKeysPressed;
+      final ctrlPressed = keys.any(
+        (k) =>
+            k == LogicalKeyboardKey.controlLeft ||
+            k == LogicalKeyboardKey.controlRight,
+      );
+      if (ctrlPressed) {
+        _currentScale = (_currentScale - event.scrollDelta.dy * 0.001).clamp(
+          0.5,
+          4.0,
+        );
+        _transformController.value = Matrix4.diagonal3Values(
+          _currentScale,
+          _currentScale,
+          1.0,
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Listener(
+          onPointerSignal: _onPointerSignal,
+          child: InteractiveViewer(
+            transformationController: _transformController,
+            minScale: 0.5,
+            maxScale: 4.0,
+            panEnabled: false,
+            scaleEnabled: false,
+            child: SizedBox(
+              width: constraints.maxWidth,
+              child: DocxView.path(
+                widget.filePath,
+                config: const DocxViewConfig(
+                  enableSearch: true,
+                  enableZoom: false,
+                  enableSelection: true,
+                  pageMode: DocxPageMode.continuous,
+                ),
+              ),
             ),
           ),
         );
