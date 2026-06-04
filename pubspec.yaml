@@ -46,6 +46,7 @@ dependencies:
   riverpod_annotation: ^4.0.2
   path: ^1.9.1
   http: ^1.2.2
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:

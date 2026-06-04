@@ -126,7 +126,6 @@ enum DiffLineType {
   added,
   removed,
   same,
-  context,
 }
 
 class DiffLine {

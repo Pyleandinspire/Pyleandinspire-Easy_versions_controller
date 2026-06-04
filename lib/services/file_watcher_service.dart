@@ -6,6 +6,7 @@ import 'package:easy_versions_controller/models/tracked_file.dart';
 import 'package:easy_versions_controller/views/settings_dialog.dart';
 import 'package:easy_versions_controller/services/auto_save_timer_service.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
+import 'package:easy_versions_controller/services/ai_commit_service.dart';
 import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 
 final fileWatcherProvider = Provider<FileWatcherService>((ref) {
@@ -99,11 +100,20 @@ class FileWatcherService {
     statusNotifier.markSaving();
 
     try {
+      // 尝试生成 AI 消息
+      final aiCommitService = _ref.read(aiCommitServiceProvider);
+      final aiMessage = await aiCommitService.generateAutoSaveMessage(
+        fileId: file.id,
+        filePath: file.filePath,
+        fileName: file.fileName,
+      );
+
       final snapshotService = _ref.read(snapshotServiceProvider);
       await snapshotService.createAutoSnapshot(
         fileId: file.id,
         filePath: file.filePath,
         fileName: file.fileName,
+        message: aiMessage,
       );
 
       final autoSaveTimer = _ref.read(autoSaveTimerProvider);

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/services/ai_service.dart';
+import 'package:easy_versions_controller/services/backup_service.dart';
 
 final settingsProvider = Provider<SettingsService>((ref) {
   return SettingsService();
@@ -234,6 +235,32 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
             child: Text('0.1.0', style: AppTextStyles.bodySecondary),
           ),
           const SizedBox(height: AppSpacing.xl),
+          Text('数据管理', style: AppTextStyles.heading3),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: () => _handleExport(context),
+                icon: const Icon(Icons.file_download, size: 16),
+                label: const Text('导出数据'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              ElevatedButton.icon(
+                onPressed: () => _handleImport(context),
+                icon: const Icon(Icons.file_upload, size: 16),
+                label: const Text('导入数据'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.secondary,
+                  foregroundColor: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xl),
           Text('关于', style: AppTextStyles.heading3),
           const SizedBox(height: AppSpacing.md),
           Text(
@@ -243,6 +270,66 @@ class _SettingsDialogState extends ConsumerState<SettingsDialog> {
         ],
       ),
     );
+  }
+
+  Future<void> _handleExport(BuildContext context) async {
+    final backupService = ref.read(backupServiceProvider);
+    try {
+      final outputPath = await backupService.exportData();
+      if (outputPath != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('数据已导出到: $outputPath')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导出失败: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleImport(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认导入'),
+        content: const Text('导入将覆盖当前的版本数据，请确认已备份重要数据。是否继续？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认导入')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final backupService = ref.read(backupServiceProvider);
+    try {
+      final result = await backupService.importData();
+      if (context.mounted) {
+        if (result.cancelled) return;
+        if (result.success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result.message ?? '导入成功')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error ?? '导入失败'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导入失败: $e'), backgroundColor: AppColors.error),
+        );
+      }
+    }
   }
 
   Widget _buildSettingItem({required String label, required Widget child}) {

@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:easy_versions_controller/utils/app_theme.dart';
 import 'package:easy_versions_controller/models/tracked_file.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
+import 'package:easy_versions_controller/services/ai_commit_service.dart';
+import 'package:easy_versions_controller/utils/platform_utils.dart';
 
 final editorProvider = Provider<TextEditorService>((ref) {
   return TextEditorService(ref);
@@ -41,11 +44,18 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   late TextEditingController _textController;
   final ScrollController _lineScrollController = ScrollController();
   final ScrollController _textScrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
   bool _isSyncingScroll = false;
   bool _hasChanges = false;
   bool _isSaving = false;
+  int _cursorLine = 1;
+  int _cursorColumn = 1;
   final List<String> _history = [];
   int _historyIndex = -1;
+  bool _showFindReplace = false;
+  final TextEditingController _findController = TextEditingController();
+  final TextEditingController _replaceController = TextEditingController();
+  final FocusNode _findFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -65,6 +75,10 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
     _textController.dispose();
     _lineScrollController.dispose();
     _textScrollController.dispose();
+    _focusNode.dispose();
+    _findController.dispose();
+    _replaceController.dispose();
+    _findFocusNode.dispose();
     super.dispose();
   }
 
@@ -94,7 +108,164 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
   void _onTextChanged() {
     setState(() {
       _hasChanges = true;
+      _updateCursorPosition();
     });
+  }
+
+  void _updateCursorPosition() {
+    final offset = _textController.selection.baseOffset;
+    final text = _textController.text;
+    var line = 1;
+    var col = 1;
+    for (var i = 0; i < offset && i < text.length; i++) {
+      if (text[i] == '\n') {
+        line++;
+        col = 1;
+      } else {
+        col++;
+      }
+    }
+    _cursorLine = line;
+    _cursorColumn = col;
+  }
+
+  int get _wordCount {
+    return _textController.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+  }
+
+  int get _lineCount {
+    return '\n'.allMatches(_textController.text).length + 1;
+  }
+
+  int get _charCount {
+    return _textController.text.length;
+  }
+
+  String get _fileType => widget.file.fileName.split('.').last.toUpperCase();
+
+  void _findNext() {
+    final query = _findController.text;
+    if (query.isEmpty) return;
+    final text = _textController.text;
+    final currentPos = _textController.selection.baseOffset;
+    final index = text.indexOf(query, currentPos);
+    if (index >= 0) {
+      _textController.selection = TextSelection(
+        baseOffset: index,
+        extentOffset: index + query.length,
+      );
+    } else {
+      // Wrap around
+      final wrapIndex = text.indexOf(query, 0);
+      if (wrapIndex >= 0) {
+        _textController.selection = TextSelection(
+          baseOffset: wrapIndex,
+          extentOffset: wrapIndex + query.length,
+        );
+      }
+    }
+  }
+
+  void _replaceCurrent() {
+    final query = _findController.text;
+    final replacement = _replaceController.text;
+    if (query.isEmpty) return;
+    final selection = _textController.selection;
+    if (!selection.isValid) return;
+    final selected = _textController.text.substring(selection.start, selection.end);
+    if (selected == query) {
+      _textController.value = _textController.value.replaced(
+        TextRange(start: selection.start, end: selection.end),
+        replacement,
+      );
+      _saveToHistory();
+    }
+    _findNext();
+  }
+
+  void _replaceAll() {
+    final query = _findController.text;
+    final replacement = _replaceController.text;
+    if (query.isEmpty) return;
+    final newText = _textController.text.replaceAll(query, replacement);
+    _textController.text = newText;
+    _saveToHistory();
+    setState(() => _hasChanges = true);
+  }
+
+  void _toggleFindReplace() {
+    setState(() => _showFindReplace = !_showFindReplace);
+    if (_showFindReplace) {
+      _findFocusNode.requestFocus();
+    }
+  }
+
+  Widget _buildFindReplaceBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 4),
+      decoration: const BoxDecoration(
+        color: AppColors.secondary,
+        border: Border(top: BorderSide(color: AppColors.accent)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 160,
+            child: TextField(
+              controller: _findController,
+              focusNode: _findFocusNode,
+              style: AppTextStyles.caption,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '查找...',
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 140,
+            child: TextField(
+              controller: _replaceController,
+              style: AppTextStyles.caption,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '替换...',
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.search, size: 18),
+            onPressed: _findNext,
+            tooltip: '查找下一个',
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          IconButton(
+            icon: const Icon(Icons.find_replace, size: 18),
+            onPressed: _replaceCurrent,
+            tooltip: '替换当前',
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          IconButton(
+            icon: const Icon(Icons.done_all, size: 18), 
+            onPressed: _replaceAll,
+            tooltip: '全部替换',
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: _toggleFindReplace,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ],
+      ),
+    );
   }
 
   void _saveToHistory() {
@@ -134,11 +305,19 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
       await editorService.writeFile(widget.file.filePath, _textController.text);
 
       // 保存后自动创建快照
+      final aiCommitService = ref.read(aiCommitServiceProvider);
+      final aiMessage = await aiCommitService.generateAutoSaveMessage(
+        fileId: widget.file.id,
+        filePath: widget.file.filePath,
+        fileName: widget.file.fileName,
+      );
+
       final snapshotService = ref.read(snapshotServiceProvider);
       await snapshotService.createAutoSnapshot(
         fileId: widget.file.id,
         filePath: widget.file.filePath,
         fileName: widget.file.fileName,
+        message: aiMessage,
       );
 
       _saveToHistory();
@@ -170,10 +349,61 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: _buildEditor(),
-      floatingActionButton: _buildSaveButton(),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _saveFile,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true): _toggleFindReplace,
+      },
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        child: Scaffold(
+          appBar: _buildAppBar(),
+          body: Column(
+            children: [
+              if (_showFindReplace) _buildFindReplaceBar(),
+              Expanded(child: _buildEditor()),
+            ],
+          ),
+          floatingActionButton: _buildSaveButton(),
+          bottomNavigationBar: _buildStatusBar(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBar() {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      decoration: const BoxDecoration(
+        color: AppColors.secondary,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          Text('行 $_cursorLine, 列 $_cursorColumn', style: AppTextStyles.caption),
+          const VerticalDivider(width: 20),
+          Text('字数 $_wordCount', style: AppTextStyles.caption),
+          const VerticalDivider(width: 20),
+          Text('行数 $_lineCount', style: AppTextStyles.caption),
+          const VerticalDivider(width: 20),
+          Text('字符 $_charCount', style: AppTextStyles.caption),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.accent.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(_fileType, style: AppTextStyles.caption.copyWith(color: AppColors.accent)),
+          ),
+          if (_hasChanges) ...[
+            const SizedBox(width: AppSpacing.md),
+            Text('未保存', style: AppTextStyles.caption.copyWith(color: AppColors.warning)),
+          ],
+        ],
+      ),
     );
   }
 
@@ -206,6 +436,11 @@ class _TextEditorViewState extends ConsumerState<TextEditorView> {
         onPressed: () => Navigator.pop(context),
       ),
       actions: [
+        IconButton(
+          icon: const Icon(Icons.open_in_new, size: 20),
+          tooltip: '用系统默认程序打开',
+          onPressed: () => openFileWithDefaultApp(widget.file.filePath),
+        ),
         IconButton(
           icon: const Icon(Icons.undo, size: 20),
           tooltip: '撤销',

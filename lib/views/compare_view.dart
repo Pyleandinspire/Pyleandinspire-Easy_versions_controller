@@ -320,10 +320,6 @@ class _CompareViewState extends ConsumerState<CompareView> {
                   bgColor = null;
                   prefix = ' ';
                   break;
-                case DiffLineType.context:
-                  bgColor = AppColors.diffContext;
-                  prefix = '~';
-                  break;
               }
 
               return Container(

@@ -13,10 +13,12 @@ import 'package:easy_versions_controller/views/help_dialog.dart';
 import 'package:easy_versions_controller/views/compare_view.dart';
 import 'package:easy_versions_controller/views/ai_agent_view.dart';
 import 'package:easy_versions_controller/views/text_editor_view.dart';
+import 'package:easy_versions_controller/views/snapshot_preview_view.dart';
 import 'package:easy_versions_controller/viewmodels/auto_save_status_provider.dart';
 import 'package:easy_versions_controller/viewmodels/snapshot_timeline_provider.dart';
 import 'package:easy_versions_controller/services/snapshot_service.dart';
 import 'package:easy_versions_controller/services/notification_service.dart';
+import 'package:easy_versions_controller/utils/platform_utils.dart';
 
 class MainPage extends ConsumerStatefulWidget {
   const MainPage({super.key});
@@ -491,34 +493,6 @@ class _MainPageState extends ConsumerState<MainPage> {
     );
   }
 
-  Widget _buildNoSelectionState() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.history, size: 48, color: Color(0xFFCBD5E1)),
-          const SizedBox(height: AppSpacing.md),
-          Text('选择文件查看版本历史', style: AppTextStyles.bodySecondary),
-          const SizedBox(height: AppSpacing.sm),
-          ElevatedButton.icon(
-            onPressed: () async {
-              await ref.read(trackedFileListProvider.notifier).addFiles();
-            },
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('添加文件'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadius.button),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSnapshotTimeline(TrackedFile file) {
     final snapshotsAsync = ref.watch(snapshotTimelineProvider(file.id));
 
@@ -590,7 +564,15 @@ class _MainPageState extends ConsumerState<MainPage> {
               ),
               onTap: () {
                 Navigator.of(ctx).pop();
-                // TODO: 打开预览
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SnapshotPreviewView(
+                      snapshot: snapshot,
+                      fileName: file.fileName,
+                    ),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -1012,7 +994,7 @@ class _FilePreviewContentState extends State<_FilePreviewContent> {
           Text('不支持预览此文件类型', style: AppTextStyles.bodySecondary),
           const SizedBox(height: AppSpacing.sm),
           ElevatedButton.icon(
-            onPressed: () => Process.run('open', [widget.file.filePath]),
+            onPressed: () => openFileWithDefaultApp(widget.file.filePath),
             icon: const Icon(Icons.open_in_new, size: 16),
             label: const Text('使用系统默认程序打开'),
             style: ElevatedButton.styleFrom(

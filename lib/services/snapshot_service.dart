@@ -167,6 +167,7 @@ class SnapshotService {
     required String fileId,
     required String filePath,
     required String fileName,
+    String? message,
   }) async {
     final sourceFile = File(filePath);
     if (!sourceFile.existsSync()) {
@@ -199,7 +200,7 @@ class SnapshotService {
       timestamp: now,
       fileSize: fileSize,
       sha256Hash: hash,
-      message: '自动保存',
+      message: message ?? '自动保存',
     );
 
     await _dbService.insertSnapshot(snapshot);
